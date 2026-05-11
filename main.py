@@ -12,6 +12,9 @@ from app.core.config import settings
 from app.core.logger import logger
 from app.db.connection import db_client
 from user_agents import parse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from app.core.rate_limit import limiter, AUTH_LIMIT, REGULAR_LIMIT, STRICT_LIMIT
 
 
 @asynccontextmanager
@@ -36,6 +39,10 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if settings.EXPOSE_DOCS else None,
         lifespan=lifespan,
     )
+
+    # Rate Limiter
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     # Middleware
     app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -149,7 +156,8 @@ def create_app() -> FastAPI:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/health", response_model=APIResponse[dict], tags=["System"])
-    async def health_check():
+    @limiter.limit(REGULAR_LIMIT)
+    async def health_check(request: Request):
         return APIResponse(
             status="success",
             message="Application is healthy and running",
@@ -171,6 +179,7 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=status_code, content=payload.model_dump(exclude_none=True))
 
     @app.get("/debug/user-agent", tags=["Debug"])
+    @limiter.limit(STRICT_LIMIT)
     async def get_user_agent_info(request: Request):
         ua_string = request.headers.get("User-Agent", "")
         user_agent = parse(ua_string)

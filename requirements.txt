@@ -7,3 +7,4 @@ motor
 user-agents
 slowapi
 orjson
+redis

@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = Field(default="1.0.0", description="Application version exposed in health and metrics metadata.")
     MONGO_MAX_POOL_SIZE: int = Field(default=50, ge=1, description="Maximum MongoDB connection pool size.")
     MONGO_MIN_POOL_SIZE: int = Field(default=10, ge=0, description="Minimum MongoDB connection pool size.")
+    REDIS_URL: str = Field(default="redis://localhost:6379", description="Redis connection URL for rate limiting")
 
     @field_validator("CORS_ORIGINS", "TRUSTED_HOSTS", mode="before")
     @classmethod
