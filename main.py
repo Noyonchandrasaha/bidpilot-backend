@@ -11,6 +11,7 @@ from app.api.schemas.response import APIErrorResponse, APIResponse, ErrorDetail
 from app.core.config import settings
 from app.core.logger import logger
 from app.db.connection import db_client
+from user_agents import parse
 
 
 @asynccontextmanager
@@ -57,6 +58,36 @@ def create_app() -> FastAPI:
         # Hide server details
         if "server" in response.headers:
              del response.headers["server"]
+        return response
+
+    @app.middleware("http")
+    async def log_user_agent(request: Request, call_next):
+        ua_string = request.headers.get("User-Agent", "")
+        user_agent = parse(ua_string)
+        
+        # Log basic info
+        client_ip = request.client.host if request.client else "unknown"
+        logger.info(
+            f"Incoming Request | IP: {client_ip} | Method: {request.method} | Path: {request.url.path} | "
+            f"Browser: {user_agent.browser.family} {user_agent.browser.version_string} | "
+            f"OS: {user_agent.os.family} {user_agent.os.version_string} | "
+            f"Device: {user_agent.device.family} | PC: {user_agent.is_pc} | Mobile: {user_agent.is_mobile}"
+        )
+        
+        # Log all available data for the user to see in logger (as requested)
+        logger.debug(
+            f"Full User-Agent Data: "
+            f"Browser: {user_agent.browser}, "
+            f"OS: {user_agent.os}, "
+            f"Device: {user_agent.device}, "
+            f"Mobile: {user_agent.is_mobile}, "
+            f"Tablet: {user_agent.is_tablet}, "
+            f"PC: {user_agent.is_pc}, "
+            f"Touch: {user_agent.is_touch_capable}, "
+            f"Bot: {user_agent.is_bot}"
+        )
+        
+        response = await call_next(request)
         return response
 
     @app.exception_handler(StarletteHTTPException)
@@ -138,6 +169,37 @@ def create_app() -> FastAPI:
             data={"database": "up" if db_ready else "down"},
         )
         return JSONResponse(status_code=status_code, content=payload.model_dump(exclude_none=True))
+
+    @app.get("/debug/user-agent", tags=["Debug"])
+    async def get_user_agent_info(request: Request):
+        ua_string = request.headers.get("User-Agent", "")
+        user_agent = parse(ua_string)
+        
+        return {
+            "raw_user_agent": ua_string,
+            "browser": {
+                "family": user_agent.browser.family,
+                "version": user_agent.browser.version,
+                "version_string": user_agent.browser.version_string,
+            },
+            "os": {
+                "family": user_agent.os.family,
+                "version": user_agent.os.version,
+                "version_string": user_agent.os.version_string,
+            },
+            "device": {
+                "family": user_agent.device.family,
+                "brand": user_agent.device.brand,
+                "model": user_agent.device.model,
+            },
+            "flags": {
+                "is_mobile": user_agent.is_mobile,
+                "is_tablet": user_agent.is_tablet,
+                "is_pc": user_agent.is_pc,
+                "is_touch_capable": user_agent.is_touch_capable,
+                "is_bot": user_agent.is_bot,
+            }
+        }
 
     # Include API routers
 
