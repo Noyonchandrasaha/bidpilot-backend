@@ -68,8 +68,8 @@ class MongoDBClient:
 db_client = MongoDBClient(
     settings.MONGO_DB_CONNECTION_STRING,
     settings.DATABASE_NAME,
-    max_pool_size=50,
-    min_pool_size=10,
+    max_pool_size=settings.MONGO_MAX_POOL_SIZE,
+    min_pool_size=settings.MONGO_MIN_POOL_SIZE,
 )
 
 
