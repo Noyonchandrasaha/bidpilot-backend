@@ -178,37 +178,6 @@ def create_app() -> FastAPI:
         )
         return JSONResponse(status_code=status_code, content=payload.model_dump(exclude_none=True))
 
-    @app.get("/debug/user-agent", tags=["Debug"])
-    @limiter.limit(STRICT_LIMIT)
-    async def get_user_agent_info(request: Request):
-        ua_string = request.headers.get("User-Agent", "")
-        user_agent = parse(ua_string)
-        
-        return {
-            "raw_user_agent": ua_string,
-            "browser": {
-                "family": user_agent.browser.family,
-                "version": user_agent.browser.version,
-                "version_string": user_agent.browser.version_string,
-            },
-            "os": {
-                "family": user_agent.os.family,
-                "version": user_agent.os.version,
-                "version_string": user_agent.os.version_string,
-            },
-            "device": {
-                "family": user_agent.device.family,
-                "brand": user_agent.device.brand,
-                "model": user_agent.device.model,
-            },
-            "flags": {
-                "is_mobile": user_agent.is_mobile,
-                "is_tablet": user_agent.is_tablet,
-                "is_pc": user_agent.is_pc,
-                "is_touch_capable": user_agent.is_touch_capable,
-                "is_bot": user_agent.is_bot,
-            }
-        }
 
     # Include API routers
 
