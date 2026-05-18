@@ -9,16 +9,7 @@ from pydantic import (
     Field,
     SecretStr,
 )
-
-
-# =========================================================
-# USER ROLE ENUM
-# =========================================================
-
-class UserRole(str, Enum):
-    ADMIN = "ADMIN"
-    TEACHER = "TEACHER"
-    STUDENT = "STUDENT"
+from app.utils.enum.user import UserRole
 
 
 # =========================================================

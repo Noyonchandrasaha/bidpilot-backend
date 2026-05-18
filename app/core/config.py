@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     MONGO_MIN_POOL_SIZE: int = Field(default=10, ge=0, description="Minimum MongoDB connection pool size.")
     REDIS_URL: str = Field(default="redis://localhost:6379", description="Redis connection URL for rate limiting")
 
+    ADMIN_EMAIL: str = Field(default="admin@example.com")
+    ADMIN_PASSWORD: str = Field(default="ASDFqwer!234")
+
     @field_validator("CORS_ORIGINS", "TRUSTED_HOSTS", mode="before")
     @classmethod
     def assemble_list(cls, v: Union[str, List[str]], info: ValidationInfo) -> Union[List[str], str]:

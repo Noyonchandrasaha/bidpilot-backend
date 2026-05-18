@@ -4,14 +4,7 @@ from datetime import datetime, timezone
 from bson import ObjectId
 from enum import Enum
 from app.utils.py_object_id import PyObjectId
-
-
-# -----------------------------------
-# User Role
-# -----------------------------------
-class UserRole(str, Enum):
-    ADMIN="ADMIN"
-    STUDENT="STUDENT"
+from app.utils.enum.user import UserRole
 
 
 # -----------------------------------
