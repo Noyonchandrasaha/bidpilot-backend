@@ -67,12 +67,22 @@ class CSRFValidationError(SecurityError):
 # REDIS
 # =========================================================
 
-if settings.REDIS_URL:
-    redis_client = redis.from_url(
-        settings.REDIS_URL,
-        decode_responses=True,
-    )
-else:
+try:
+    if settings.REDIS_URL:
+        redis_client = redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+        )
+    else:
+        redis_client = redis.Redis(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            password=settings.REDIS_PASSWORD.get_secret_value() or None,
+            ssl=settings.REDIS_SSL,
+            decode_responses=True,
+        )
+except ValueError:
+    # Fallback for malformed REDIS_URL (commonly from non-URL-encoded passwords).
     redis_client = redis.Redis(
         host=settings.REDIS_HOST,
         port=settings.REDIS_PORT,

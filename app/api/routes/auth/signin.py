@@ -1,11 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import datetime, timezone
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.api.schemas.auth.signin import SigninRequest, SigninResponse
+from app.api.schemas.auth.forget_password import (
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
+    OTPVerificationRequest,
+    OTPVerificationResponse,
+    ResendOTPRequest,
+    ResendOTPResponse,
+    UpdatePasswordRequest,
+    UpdatePasswordResponse,
+)
 from app.api.schemas.response import APIResponse
 from app.db.connection import get_database
 from app.services.auth_service import auth_service
+from app.services.forgot_password_service import forgot_password_service
 from app.utils.security import (
     InvalidCredentialsError,
     InvalidSessionError,
@@ -166,3 +178,59 @@ async def refresh_tokens(
             "refresh_token_expires_in": rotated["refresh_token_expires_in"],
         },
     )
+
+
+@router.post("/forgot-password", response_model=APIResponse[ForgotPasswordResponse])
+@limiter.limit(AUTH_LIMIT)
+async def forgot_password(request: Request, payload: ForgotPasswordRequest, db: AsyncIOMotorDatabase = Depends(get_database)):
+    try:
+        result = await forgot_password_service.request_reset(db=db, email=payload.email)
+        return APIResponse(status="success", message="If the account exists, OTP has been generated", data=result)
+    except RedisConnectionError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password reset service is temporarily unavailable",
+        )
+
+
+@router.post("/forgot-password/verify-otp", response_model=APIResponse[OTPVerificationResponse])
+@limiter.limit(AUTH_LIMIT)
+async def verify_forgot_password_otp(request: Request, payload: OTPVerificationRequest):
+    try:
+        result = await forgot_password_service.verify_otp(otp=payload.otp, reset_token=payload.reset_token)
+        return APIResponse(status="success", message="OTP verified successfully", data=result)
+    except RedisConnectionError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OTP verification service is temporarily unavailable",
+        )
+
+
+@router.post("/forgot-password/resend-otp", response_model=APIResponse[ResendOTPResponse])
+@limiter.limit(AUTH_LIMIT)
+async def resend_forgot_password_otp(request: Request, payload: ResendOTPRequest):
+    try:
+        result = await forgot_password_service.resend_otp(reset_token=payload.reset_token)
+        return APIResponse(status="success", message="OTP resent successfully", data=result)
+    except RedisConnectionError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OTP resend service is temporarily unavailable",
+        )
+
+
+@router.post("/forgot-password/update-password", response_model=APIResponse[UpdatePasswordResponse])
+@limiter.limit(AUTH_LIMIT)
+async def update_forgot_password(request: Request, payload: UpdatePasswordRequest, db: AsyncIOMotorDatabase = Depends(get_database)):
+    try:
+        result = await forgot_password_service.update_password(
+            db=db,
+            verified_reset_token=payload.verified_reset_token,
+            new_password=payload.new_password.get_secret_value(),
+        )
+        return APIResponse(status="success", message="Password updated successfully", data=result)
+    except RedisConnectionError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password update service is temporarily unavailable",
+        )
