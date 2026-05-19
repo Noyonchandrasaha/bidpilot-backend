@@ -17,6 +17,7 @@ from slowapi.errors import RateLimitExceeded
 from app.core.rate_limit import limiter, AUTH_LIMIT, REGULAR_LIMIT, STRICT_LIMIT
 from app.utils.enum.user import UserRole
 from app.utils.security import security_service
+from app.api.routes.auth.signin import router as auth_router
 
 
 async def seed_admin_account() -> None:
@@ -101,6 +102,12 @@ def create_app() -> FastAPI:
     async def log_user_agent(request: Request, call_next):
         ua_string = request.headers.get("User-Agent", "")
         user_agent = parse(ua_string)
+        request.state.user_agent_raw = ua_string
+        request.state.device_name = (
+            f"{user_agent.device.family} | "
+            f"{user_agent.browser.family} {user_agent.browser.version_string} | "
+            f"{user_agent.os.family} {user_agent.os.version_string}"
+        )
         
         # Log basic info
         client_ip = request.client.host if request.client else "unknown"
@@ -210,6 +217,7 @@ def create_app() -> FastAPI:
 
 
     # Include API routers
+    app.include_router(auth_router)
 
 
     return app

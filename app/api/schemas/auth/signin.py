@@ -35,12 +35,6 @@ class SigninRequest(BaseModel):
         description="Whether to extend refresh token lifetime"
     )
 
-    device_name: Optional[str] = Field(
-        default=None,
-        max_length=120,
-        description="Optional client device name"
-    )
-
     model_config = ConfigDict(
         extra="forbid",
         str_strip_whitespace=True,
@@ -48,8 +42,7 @@ class SigninRequest(BaseModel):
             "example": {
                 "email": "john@example.com",
                 "password": "StrongPass@123",
-                "remember_me": True,
-                "device_name": "MacBook Pro Chrome"
+                "remember_me": True
             }
         }
     )
@@ -125,7 +118,7 @@ class AuthTokens(BaseModel):
     )
 
     issued_at: datetime = Field(
-        default_factory=datetime.now(timezone),
+        default_factory=lambda: datetime.now(timezone.utc),
         description="Token issuance timestamp"
     )
 

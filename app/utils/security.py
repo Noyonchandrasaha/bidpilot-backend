@@ -4,6 +4,7 @@ import hmac
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import uuid4
+from bson import ObjectId
 import jwt
 import redis.asyncio as redis
 from jwt import (
@@ -290,7 +291,7 @@ class SecurityService:
         cls,
         *,
         db: AsyncIOMotorDatabase,
-        user_id: str,
+        user_id: ObjectId,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> tuple[str, str]:
@@ -299,7 +300,7 @@ class SecurityService:
         session_id = str(uuid4())
 
         token, jti = cls._create_token(
-            subject=user_id,
+            subject=str(user_id),
             token_type=cls.REFRESH_TOKEN_TYPE,
             family_id=family_id,
             session_id=session_id,
@@ -482,7 +483,7 @@ class SecurityService:
                 "Replay attack detected"
             )
 
-        if session["user_id"] != payload["sub"]:
+        if str(session["user_id"]) != payload["sub"]:
             raise InvalidSessionError(
                 "Refresh token subject mismatch"
             )
@@ -595,7 +596,7 @@ class SecurityService:
             raise InvalidSessionError()
 
         new_token, new_jti = cls._create_token(
-            subject=old_session["user_id"],
+            subject=str(old_session["user_id"]),
             token_type=cls.REFRESH_TOKEN_TYPE,
             family_id=old_session[
                 "family_id"
@@ -656,7 +657,7 @@ class SecurityService:
         )
 
         access_token = cls.create_access_token(
-            user_id=old_session["user_id"],
+            user_id=str(old_session["user_id"]),
             session_id=old_session[
                 "session_id"
             ],

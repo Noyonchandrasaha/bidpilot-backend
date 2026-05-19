@@ -1,0 +1,71 @@
+from datetime import datetime, timezone
+
+from fastapi import Request
+from motor.motor_asyncio import AsyncIOMotorDatabase
+
+from app.api.schemas.auth.signin import AuthTokens, SigninRequest, SigninResponse, UserInfo
+from app.utils.security import InvalidCredentialsError, security_service
+
+
+class AuthService:
+    @staticmethod
+    async def signin(*, db: AsyncIOMotorDatabase, payload: SigninRequest, request: Request) -> SigninResponse:
+        email = payload.email.strip().lower()
+        user = await db.users.find_one({"email": email})
+
+        # Avoid user enumeration by returning the same auth error path.
+        if not user:
+            raise InvalidCredentialsError("Invalid email or password")
+
+        if not user.get("is_active", True):
+            raise InvalidCredentialsError("Invalid email or password")
+
+        is_valid_password = security_service.verify_password(
+            payload.password.get_secret_value(),
+            user.get("hashed_password", ""),
+        )
+        if not is_valid_password:
+            raise InvalidCredentialsError("Invalid email or password")
+
+        client_host = request.client.host if request.client else None
+        middleware_device_name = getattr(request.state, "device_name", None)
+        raw_user_agent = getattr(request.state, "user_agent_raw", None)
+        user_agent = raw_user_agent or request.headers.get("user-agent")
+
+        refresh_token, session_id = await security_service.create_refresh_token(
+            db=db,
+            user_id=user["_id"],
+            ip_address=client_host,
+            user_agent=middleware_device_name or user_agent,
+        )
+        access_token = security_service.create_access_token(
+            user_id=str(user["_id"]),
+            session_id=session_id,
+        )
+
+        now = datetime.now(timezone.utc)
+        await db.users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"updated_at": now, "last_login_at": now}},
+        )
+
+        return SigninResponse(
+            data=UserInfo(
+                user_id=str(user["_id"]),
+                role=user["role"],
+                is_verified=user.get("is_verified", False),
+                last_login_at=now,
+            ),
+            tokens=AuthTokens(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                token_type="Bearer",
+                access_token_expires_in=security_service.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+                refresh_token_expires_in=security_service.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+                session_id=session_id,
+                issued_at=now,
+            ),
+        )
+
+
+auth_service = AuthService()
