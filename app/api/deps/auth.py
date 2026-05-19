@@ -1,4 +1,6 @@
 from typing import Callable
+import json
+from datetime import datetime
 
 from bson import ObjectId
 from fastapi import Depends, HTTPException, Request, status
@@ -13,7 +15,34 @@ from app.utils.security import (
     TokenExpiredError,
     TokenRevokedError,
     security_service,
+    redis_client,
 )
+
+USER_PROFILE_CACHE_TTL_SECONDS = 60
+
+
+def _serialize_user_for_cache(user: dict) -> str:
+    payload = dict(user)
+    payload["_id"] = str(payload.get("_id"))
+    for field in ("created_at", "updated_at", "last_login_at"):
+        value = payload.get(field)
+        if isinstance(value, datetime):
+            payload[field] = value.isoformat()
+    return json.dumps(payload)
+
+
+def _deserialize_user_from_cache(raw: str) -> dict:
+    payload = json.loads(raw)
+    if payload.get("_id") and ObjectId.is_valid(payload["_id"]):
+        payload["_id"] = ObjectId(payload["_id"])
+    for field in ("created_at", "updated_at", "last_login_at"):
+        value = payload.get(field)
+        if isinstance(value, str):
+            try:
+                payload[field] = datetime.fromisoformat(value)
+            except ValueError:
+                pass
+    return payload
 
 
 async def get_current_user(
@@ -43,7 +72,28 @@ async def get_current_user(
     if not user_id or not ObjectId.is_valid(user_id):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
 
-    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    cache_key = f"user_profile:{user_id}"
+    user = None
+    try:
+        cached_user = await redis_client.get(cache_key)
+        if cached_user:
+            user = _deserialize_user_from_cache(cached_user)
+    except RedisConnectionError:
+        # Cache is optional for this flow; fallback to database.
+        user = None
+
+    if user is None:
+        user = await db.users.find_one({"_id": ObjectId(user_id)})
+        if user:
+            try:
+                await redis_client.setex(
+                    cache_key,
+                    USER_PROFILE_CACHE_TTL_SECONDS,
+                    _serialize_user_for_cache(user),
+                )
+            except RedisConnectionError:
+                pass
+
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
