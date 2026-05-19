@@ -91,6 +91,20 @@ except ValueError:
         decode_responses=True,
     )
 
+# Safety override for local/dev Redis endpoints that are not TLS-enabled.
+if (
+    settings.REDIS_HOST in {"localhost", "127.0.0.1"}
+    or settings.REDIS_URL.startswith("redis://localhost")
+    or settings.REDIS_URL.startswith("redis://127.0.0.1")
+):
+    redis_client = redis.Redis(
+        host=settings.REDIS_HOST or "localhost",
+        port=settings.REDIS_PORT,
+        password=settings.REDIS_PASSWORD.get_secret_value() or None,
+        ssl=False,
+        decode_responses=True,
+    )
+
 
 # =========================================================
 # SECURITY SERVICE

@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from fastapi import FastAPI, Request, status, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +19,7 @@ from app.core.rate_limit import limiter, AUTH_LIMIT, REGULAR_LIMIT, STRICT_LIMIT
 from app.utils.enum.user import UserRole
 from app.utils.security import security_service
 from app.api.routes.auth.signin import router as auth_router
+from app.api.routes.users.profile import router as user_router
 
 
 async def seed_admin_account() -> None:
@@ -31,8 +33,25 @@ async def seed_admin_account() -> None:
         return
 
     existing_admin = await db.users.find_one({"email": admin_email})
+    now = datetime.now(timezone.utc)
+
     if existing_admin:
-        logger.info("admin_seed_skipped_already_exists", extra={"email": admin_email})
+        update_fields = {
+            "role": UserRole.ADMIN.value,
+            "is_verified": True,
+            "is_active": True,
+            "updated_at": now,
+        }
+        if not existing_admin.get("created_at"):
+            update_fields["created_at"] = now
+        if not existing_admin.get("full_name"):
+            update_fields["full_name"] = "System Admin"
+
+        await db.users.update_one(
+            {"_id": existing_admin["_id"]},
+            {"$set": update_fields},
+        )
+        logger.info("admin_seed_updated_existing", extra={"email": admin_email})
         return
 
     now_payload = {
@@ -42,6 +61,8 @@ async def seed_admin_account() -> None:
         "role": UserRole.ADMIN.value,
         "is_verified": True,
         "is_active": True,
+        "created_at": now,
+        "updated_at": now,
     }
     await db.users.insert_one(now_payload)
     logger.info("admin_seed_created", extra={"email": admin_email})
@@ -218,6 +239,7 @@ def create_app() -> FastAPI:
 
     # Include API routers
     app.include_router(auth_router)
+    app.include_router(user_router)
 
 
     return app

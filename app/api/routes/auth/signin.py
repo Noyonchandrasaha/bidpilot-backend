@@ -23,6 +23,7 @@ from app.utils.security import (
     InvalidSessionError,
     TokenReuseDetectedError,
     TokenExpiredError,
+    TokenRevokedError,
     InvalidTokenClaimsError,
     InvalidTokenTypeError,
     security_service,
@@ -92,7 +93,7 @@ async def signout(
             session_id = payload.get("sid")
             if session_id:
                 await security_service.revoke_session(db=db, session_id=session_id)
-        except (InvalidSessionError, InvalidTokenClaimsError, InvalidTokenTypeError):
+        except (InvalidSessionError, InvalidTokenClaimsError, InvalidTokenTypeError, TokenRevokedError, TokenExpiredError):
             pass
 
     if access_token:
