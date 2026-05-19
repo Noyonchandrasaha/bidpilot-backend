@@ -13,7 +13,6 @@ from jwt import (
     InvalidIssuerError,
     InvalidTokenError,
 )
-from pymongo import ReturnDocument
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from passlib.context import CryptContext
 from passlib.exc import InvalidHashError
@@ -321,8 +320,7 @@ class SecurityService:
 
             "revoked": False,
             "reused": False,
-
-            "replaced_by": None,
+            "refresh_count": 0,
 
             "ip_address": ip_address,
             "user_agent": user_agent,
@@ -525,75 +523,31 @@ class SecurityService:
             refresh_token
         )
 
-        old_session = (
-            await db.refresh_sessions.find_one_and_update(
-                {
-                    "token_hash": old_token_hash,
-                    "revoked": False,
-                    "reused": False,
-                    "replaced_by": None,
-                },
-                {
-                    "$set": {
-                        "last_used_at":
-                            datetime.now(
-                                timezone.utc
-                            )
-                    }
-                },
-                return_document=(
-                    ReturnDocument.AFTER
-                ),
-            )
+        old_session = await db.refresh_sessions.find_one(
+            {"token_hash": old_token_hash}
         )
 
         if not old_session:
-
-            compromised = (
-                await db.refresh_sessions.find_one({
-                    "token_hash":
-                        old_token_hash
-                })
-            )
-
-            if compromised:
-
-                await db.refresh_sessions.update_many(
-                    {
-                        "family_id":
-                            compromised[
-                                "family_id"
-                            ]
-                    },
-                    {
-                        "$set": {
-                            "revoked": True,
-                            "reused": True,
-                        }
-                    },
-                )
-
-                logger.warning(
-                    "refresh_reuse_detected",
-                    extra={
-                        "family_id":
-                            compromised[
-                                "family_id"
-                            ],
-                        "user_id":
-                            compromised[
-                                "user_id"
-                            ],
-                    },
-                )
-
-                raise (
-                    TokenReuseDetectedError(
-                        "Replay attack detected"
-                    )
-                )
-
             raise InvalidSessionError()
+
+        if old_session.get("revoked"):
+            await db.refresh_sessions.update_many(
+                {"family_id": old_session["family_id"]},
+                {
+                    "$set": {
+                        "revoked": True,
+                        "reused": True,
+                    }
+                },
+            )
+            logger.warning(
+                "refresh_reuse_detected",
+                extra={
+                    "family_id": old_session["family_id"],
+                    "user_id": old_session["user_id"],
+                },
+            )
+            raise TokenReuseDetectedError("Replay attack detected")
 
         new_token, new_jti = cls._create_token(
             subject=str(old_session["user_id"]),
@@ -608,53 +562,30 @@ class SecurityService:
                 days=cls.REFRESH_TOKEN_EXPIRE_DAYS
             ),
         )
-
-        await db.refresh_sessions.insert_one({
-            "session_id":
-                old_session["session_id"],
-
-            "user_id":
-                old_session["user_id"],
-
-            "family_id":
-                old_session["family_id"],
-
-            "token_jti": new_jti,
-
-            "token_hash":
-                cls.hash_token(new_token),
-
-            "revoked": False,
-            "reused": False,
-
-            "replaced_by": None,
-
-            "ip_address": ip_address,
-            "user_agent": user_agent,
-
-            "created_at":
-                datetime.now(timezone.utc),
-
-            "last_used_at":
-                datetime.now(timezone.utc),
-
-            "expires_at":
-                datetime.now(timezone.utc)
-                + timedelta(
-                    days=cls.REFRESH_TOKEN_EXPIRE_DAYS
-                ),
-        })
-
-        await db.refresh_sessions.update_one(
+        now = datetime.now(timezone.utc)
+        update_result = await db.refresh_sessions.update_one(
             {
-                "_id": old_session["_id"]
+                "_id": old_session["_id"],
+                "token_hash": old_token_hash,
+                "revoked": False,
             },
             {
                 "$set": {
-                    "replaced_by": new_jti,
-                }
+                    "token_jti": new_jti,
+                    "token_hash": cls.hash_token(new_token),
+                    "last_used_at": now,
+                    "last_rotated_at": now,
+                    "expires_at": now + timedelta(days=cls.REFRESH_TOKEN_EXPIRE_DAYS),
+                    "ip_address": ip_address,
+                    "user_agent": user_agent,
+                },
+                "$inc": {
+                    "refresh_count": 1
+                },
             },
         )
+        if update_result.modified_count != 1:
+            raise TokenReuseDetectedError("Replay attack detected")
 
         access_token = cls.create_access_token(
             user_id=str(old_session["user_id"]),

@@ -46,6 +46,14 @@ class MongoDBClient:
         if self.database is None:
             raise Exception("Database not initialized. Call connect() first.")
 
+        # Backward-compatible migration:
+        # refresh_sessions.session_id cannot be unique when using token rotation
+        # that stores multiple rows for the same logical session.
+        existing_refresh_indexes = await self.database.refresh_sessions.index_information()
+        session_idx = existing_refresh_indexes.get("uq_refresh_session_id")
+        if session_idx and session_idx.get("unique", False):
+            await self.database.refresh_sessions.drop_index("uq_refresh_session_id")
+
         # users collection indexes
         await self.database.users.create_indexes([
             IndexModel(
@@ -77,8 +85,7 @@ class MongoDBClient:
         await self.database.refresh_sessions.create_indexes([
             IndexModel(
                 [("session_id", ASCENDING)],
-                name="uq_refresh_session_id",
-                unique=True,
+                name="ix_refresh_session_id",
             ),
             IndexModel(
                 [("token_jti", ASCENDING)],

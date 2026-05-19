@@ -9,6 +9,8 @@ from app.services.auth_service import auth_service
 from app.utils.security import (
     InvalidCredentialsError,
     InvalidSessionError,
+    TokenReuseDetectedError,
+    TokenExpiredError,
     InvalidTokenClaimsError,
     InvalidTokenTypeError,
     security_service,
@@ -103,4 +105,64 @@ async def signout(
         status="success",
         message="Signout successful",
         data={"signed_out": True},
+    )
+
+
+@router.post("/refresh", response_model=APIResponse[dict])
+@limiter.limit(AUTH_LIMIT)
+async def refresh_tokens(
+    request: Request,
+    response: Response,
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token cookie is missing",
+        )
+
+    try:
+        rotated = await auth_service.refresh_tokens(
+            db=db,
+            refresh_token=refresh_token,
+            request=request,
+        )
+    except TokenExpiredError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token expired")
+    except TokenReuseDetectedError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token reuse detected")
+    except (InvalidSessionError, InvalidTokenClaimsError, InvalidTokenTypeError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+
+    secure_cookie = request.url.scheme == "https"
+    response.set_cookie(
+        key="access_token",
+        value=rotated["access_token"],
+        max_age=rotated["access_token_expires_in"],
+        httponly=True,
+        secure=secure_cookie,
+        samesite="lax",
+        path="/",
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=rotated["refresh_token"],
+        max_age=rotated["refresh_token_expires_in"],
+        httponly=True,
+        secure=secure_cookie,
+        samesite="lax",
+        path="/",
+    )
+
+    return APIResponse(
+        status="success",
+        message="Token refresh successful",
+        data={
+            "refreshed": True,
+            "session_id": rotated["session_id"],
+            "refresh_count": rotated["refresh_count"],
+            "access_token_expires_in": rotated["access_token_expires_in"],
+            "refresh_token_expires_in": rotated["refresh_token_expires_in"],
+        },
     )
