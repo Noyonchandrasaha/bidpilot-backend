@@ -31,9 +31,9 @@ class ACTProfile(BaseModel):
 
 
 class AcademicProfile(BaseModel):
-    schools: List[School] = []
-    sat_profile: SATProfile = SATProfile()
-    act_profile: ACTProfile = ACTProfile()
+    schools: List[School] = Field(default_factory=list)
+    sat_profile: SATProfile = Field(default_factory=SATProfile)
+    act_profile: ACTProfile = Field(default_factory=ACTProfile)
 
 
 # -----------------------------------
@@ -48,8 +48,8 @@ class Course(BaseModel):
 
 
 class CourseWork(BaseModel):
-    completed_courses: List[Course] = []
-    current_courses: List[Course] = []
+    completed_courses: List[Course] = Field(default_factory=list)
+    current_courses: List[Course] = Field(default_factory=list)
 
 
 # -----------------------------------
@@ -70,8 +70,8 @@ class ExtraCurricular(BaseModel):
 # -----------------------------------
 
 class CareerGoals(BaseModel):
-    preferred_fields_of_study: List[str] = []
-    career_interests: List[str] = []
+    preferred_fields_of_study: List[str] = Field(default_factory=list)
+    career_interests: List[str] = Field(default_factory=list)
 
 
 # -----------------------------------
@@ -91,9 +91,9 @@ class AdditionalQuestions(BaseModel):
 
 
 class CollegePreferences(BaseModel):
-    preferred_colleges: List[str] = []
-    importance_factors: List[ImportanceFactor] = []
-    additional_questions: AdditionalQuestions = AdditionalQuestions()
+    preferred_colleges: List[str] = Field(default_factory=list)
+    importance_factors: List[ImportanceFactor] = Field(default_factory=list)
+    additional_questions: AdditionalQuestions = Field(default_factory=AdditionalQuestions)
 
 
 # -----------------------------------
@@ -106,15 +106,15 @@ class Student(BaseModel):
     # relation with User
     user_id: PyObjectId
 
-    academic_profile: AcademicProfile = AcademicProfile()
+    academic_profile: AcademicProfile = Field(default_factory=AcademicProfile)
 
-    course_work: CourseWork = CourseWork()
+    course_work: CourseWork = Field(default_factory=CourseWork)
 
-    extra_curriculars: List[ExtraCurricular] = []
+    extra_curriculars: List[ExtraCurricular] = Field(default_factory=list)
 
-    career_goals: CareerGoals = CareerGoals()
+    career_goals: CareerGoals = Field(default_factory=CareerGoals)
 
-    college_preferences: CollegePreferences = CollegePreferences()
+    college_preferences: CollegePreferences = Field(default_factory=CollegePreferences)
 
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)

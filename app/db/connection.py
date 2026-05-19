@@ -1,5 +1,7 @@
 import asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ASCENDING, DESCENDING, IndexModel
+from pymongo.collation import Collation
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 from app.core.config import settings
 from app.core.logger import logger
@@ -33,11 +35,75 @@ class MongoDBClient:
 
                 await self.client.admin.command("ping")
                 self.database = self.client[self.db_name]
+                await self.ensure_indexes()
                 logger.info("MongoDB connection established.")
             except (ConnectionFailure, ServerSelectionTimeoutError) as exc:
                 logger.error(f"Could not connect to MongoDB: {exc}")
                 raise Exception(f"Could not connect to MongoDB: {exc}") from exc
         return self.database
+
+    async def ensure_indexes(self):
+        if self.database is None:
+            raise Exception("Database not initialized. Call connect() first.")
+
+        # users collection indexes
+        await self.database.users.create_indexes([
+            IndexModel(
+                [("email", ASCENDING)],
+                name="uq_users_email",
+                unique=True,
+                collation=Collation(locale="en", strength=2),
+            ),
+            IndexModel(
+                [("role", ASCENDING), ("is_active", ASCENDING)],
+                name="ix_users_role_active",
+            ),
+        ])
+
+        # students collection indexes
+        await self.database.students.create_indexes([
+            IndexModel(
+                [("user_id", ASCENDING)],
+                name="uq_students_user_id",
+                unique=True,
+            ),
+            IndexModel(
+                [("created_at", DESCENDING)],
+                name="ix_students_created_at_desc",
+            ),
+        ])
+
+        # refresh_sessions collection indexes
+        await self.database.refresh_sessions.create_indexes([
+            IndexModel(
+                [("session_id", ASCENDING)],
+                name="uq_refresh_session_id",
+                unique=True,
+            ),
+            IndexModel(
+                [("token_jti", ASCENDING)],
+                name="uq_refresh_token_jti",
+                unique=True,
+            ),
+            IndexModel(
+                [("token_hash", ASCENDING)],
+                name="uq_refresh_token_hash",
+                unique=True,
+            ),
+            IndexModel(
+                [("user_id", ASCENDING), ("family_id", ASCENDING), ("revoked", ASCENDING)],
+                name="ix_refresh_user_family_revoked",
+            ),
+            IndexModel(
+                [("user_id", ASCENDING), ("revoked", ASCENDING), ("expires_at", ASCENDING)],
+                name="ix_refresh_user_revoked_exp",
+            ),
+            IndexModel(
+                [("expires_at", ASCENDING)],
+                name="ttl_refresh_expires_at",
+                expireAfterSeconds=0,
+            ),
+        ])
 
     async def ping(self) -> bool:
         if not self.client:

@@ -15,6 +15,35 @@ from user_agents import parse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from app.core.rate_limit import limiter, AUTH_LIMIT, REGULAR_LIMIT, STRICT_LIMIT
+from app.utils.enum.user import UserRole
+from app.utils.security import security_service
+
+
+async def seed_admin_account() -> None:
+    db = db_client.get_database()
+
+    admin_email = settings.ADMIN_EMAIL.strip().lower()
+    admin_password = settings.ADMIN_PASSWORD.strip()
+
+    if not admin_email or not admin_password:
+        logger.warning("admin_seed_skipped_missing_credentials")
+        return
+
+    existing_admin = await db.users.find_one({"email": admin_email})
+    if existing_admin:
+        logger.info("admin_seed_skipped_already_exists", extra={"email": admin_email})
+        return
+
+    now_payload = {
+        "full_name": "System Admin",
+        "email": admin_email,
+        "hashed_password": security_service.hash_password(admin_password),
+        "role": UserRole.ADMIN.value,
+        "is_verified": True,
+        "is_active": True,
+    }
+    await db.users.insert_one(now_payload)
+    logger.info("admin_seed_created", extra={"email": admin_email})
 
 
 @asynccontextmanager
@@ -23,6 +52,7 @@ async def lifespan(app: FastAPI):
     try:
         # Initialize dependencies
         await db_client.connect()
+        await seed_admin_account()
         
         yield
     finally:

@@ -2,10 +2,16 @@ fastapi
 uvicorn[standard]
 pydantic
 pydantic_settings
+email-validator
+python-multipart
 python-dotenv
 motor
 user-agents
+structlog
 slowapi
 orjson
 redis
-pyjwt[crypto]
+passlib[argon2]
+argon2-cffi
+pyjwt 
+cryptography
