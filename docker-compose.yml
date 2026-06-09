@@ -1,7 +1,7 @@
 services:
   redis:
     image: redis:7.2-alpine
-    container_name: path_wise_redis
+    container_name: ledger_tracker_redis
     restart: unless-stopped
     command: [
       "redis-server",

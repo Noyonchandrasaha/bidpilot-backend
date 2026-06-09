@@ -4,11 +4,11 @@ from uuid import uuid4
 import hashlib
 import hmac
 import secrets
-from bson import ObjectId
 
 from fastapi import HTTPException, status
 from jwt import InvalidTokenError
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas.auth.forget_password import (
     ForgotPasswordResponse,
@@ -18,6 +18,7 @@ from app.api.schemas.auth.forget_password import (
 )
 from app.core.config import settings
 from app.core.logger import logger
+from app.model.models import User
 from app.utils.security import security_service, redis_client
 
 
@@ -29,7 +30,7 @@ class ForgotPasswordService:
 
     @staticmethod
     def _otp_hash(reset_id: str, otp: str) -> str:
-        secret = settings.TOKEN_HASH_SECRET.get_secret_value().encode()
+        secret = settings.token_hash_secret.encode()
         payload = f"{reset_id}:{otp}".encode()
         return hmac.new(secret, payload, hashlib.sha256).hexdigest()
 
@@ -71,8 +72,10 @@ class ForgotPasswordService:
         return payload
 
     @staticmethod
-    async def request_reset(*, db: AsyncIOMotorDatabase, email: str) -> ForgotPasswordResponse:
-        user = await db.users.find_one({"email": email.strip().lower()})
+    async def request_reset(*, db: AsyncSession, email: str) -> ForgotPasswordResponse:
+        await security_service.set_rls_context(db, bypass=True)
+        result = await db.execute(select(User).where(User.email == email.strip().lower()))
+        user = result.scalar_one_or_none()
 
         if not user:
             raise HTTPException(
@@ -80,7 +83,7 @@ class ForgotPasswordService:
                 detail="No account found with this email address",
             )
 
-        user_id = str(user["_id"])
+        user_id = str(user.id)
         reset_id = str(uuid4())
         otp = ForgotPasswordService._generate_otp()
         otp_hash = ForgotPasswordService._otp_hash(reset_id, otp)
@@ -162,7 +165,7 @@ class ForgotPasswordService:
         return ResendOTPResponse(reset_token=refreshed_token, expires_in=ForgotPasswordService.OTP_TTL_SECONDS, retry_after=ForgotPasswordService.RESEND_COOLDOWN_SECONDS, otp_resent=True)
 
     @staticmethod
-    async def update_password(*, db: AsyncIOMotorDatabase, verified_reset_token: str, new_password: str) -> UpdatePasswordResponse:
+    async def update_password(*, db: AsyncSession, verified_reset_token: str, new_password: str) -> UpdatePasswordResponse:
         payload = ForgotPasswordService._decode_reset_token(verified_reset_token, "pwd_reset_verified")
         reset_id = payload["rid"]
         redis_key = f"pwd_reset:{reset_id}"
@@ -173,11 +176,14 @@ class ForgotPasswordService:
 
         user_id = payload["sub"]
         now = datetime.now(timezone.utc)
-        await db.users.update_one(
-            {"_id": ObjectId(user_id)},
-            {"$set": {"hashed_password": security_service.hash_password(new_password), "updated_at": now}},
+        await security_service.set_rls_context(db, user_id=user_id, bypass=False)
+        await db.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(password_hash=security_service.hash_password(new_password), updated_at=now)
         )
-        await security_service.revoke_all_user_sessions(db=db, user_id=ObjectId(user_id))
+        await db.commit()
+        await security_service.revoke_all_user_sessions(db=db, user_id=user_id)
         await redis_client.delete(redis_key)
 
         return UpdatePasswordResponse(password_updated=True, sessions_revoked=True, updated_at=now)

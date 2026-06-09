@@ -8,10 +8,13 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import select
 from app.api.schemas.response import APIErrorResponse, APIResponse, ErrorDetail
 from app.core.config import settings
 from app.core.logger import logger
 from app.db.connection import db_client
+from app.db.rls import bootstrap_rls
+from app.model.models import Base, Role, User, UserStatus
 from user_agents import parse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -23,8 +26,6 @@ from app.api.routes.users.profile import router as user_router
 
 
 async def seed_admin_account() -> None:
-    db = db_client.get_database()
-
     admin_email = settings.ADMIN_EMAIL.strip().lower()
     admin_password = settings.ADMIN_PASSWORD.strip()
 
@@ -32,40 +33,55 @@ async def seed_admin_account() -> None:
         logger.warning("admin_seed_skipped_missing_credentials")
         return
 
-    existing_admin = await db.users.find_one({"email": admin_email})
     now = datetime.now(timezone.utc)
+    async with db_client.session() as db:
+        await security_service.set_rls_context(db, bypass=True)
+        role_result = await db.execute(select(Role).where(Role.slug == "admin"))
+        admin_role = role_result.scalar_one_or_none()
+        if admin_role is None:
+            admin_role = Role(
+                name="Admin",
+                slug="admin",
+                description="System administrator role",
+                is_system=True,
+            )
+            db.add(admin_role)
+            await db.flush()
 
-    if existing_admin:
-        update_fields = {
-            "role": UserRole.ADMIN.value,
-            "is_verified": True,
-            "is_active": True,
-            "updated_at": now,
-        }
-        if not existing_admin.get("created_at"):
-            update_fields["created_at"] = now
-        if not existing_admin.get("full_name"):
-            update_fields["full_name"] = "System Admin"
+        user_result = await db.execute(select(User).where(User.email == admin_email))
+        existing_admin = user_result.scalar_one_or_none()
 
-        await db.users.update_one(
-            {"_id": existing_admin["_id"]},
-            {"$set": update_fields},
+        if existing_admin:
+            existing_admin.role_id = admin_role.id
+            existing_admin.name = "System Admin"
+            existing_admin.password_hash = security_service.hash_password(admin_password)
+            existing_admin.status = UserStatus.ACTIVE
+            existing_admin.email_verified = True
+            existing_admin.updated_at = now
+            if not existing_admin.created_at:
+                existing_admin.created_at = now
+            logger.info("admin_seed_updated_existing", extra={"email": admin_email})
+            return
+
+        db.add(
+            User(
+                role_id=admin_role.id,
+                name="System Admin",
+                email=admin_email,
+                password_hash=security_service.hash_password(admin_password),
+                status=UserStatus.ACTIVE,
+                email_verified=True,
+                created_at=now,
+                updated_at=now,
+            )
         )
-        logger.info("admin_seed_updated_existing", extra={"email": admin_email})
-        return
+        logger.info("admin_seed_created", extra={"email": admin_email})
 
-    now_payload = {
-        "full_name": "System Admin",
-        "email": admin_email,
-        "hashed_password": security_service.hash_password(admin_password),
-        "role": UserRole.ADMIN.value,
-        "is_verified": True,
-        "is_active": True,
-        "created_at": now,
-        "updated_at": now,
-    }
-    await db.users.insert_one(now_payload)
-    logger.info("admin_seed_created", extra={"email": admin_email})
+
+async def init_database_schema() -> None:
+    async with db_client.engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    await bootstrap_rls(db_client.engine)
 
 
 @asynccontextmanager
@@ -74,6 +90,7 @@ async def lifespan(app: FastAPI):
     try:
         # Initialize dependencies
         await db_client.connect()
+        await init_database_schema()
         await seed_admin_account()
         
         yield

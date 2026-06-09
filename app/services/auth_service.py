@@ -2,28 +2,33 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Request
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.schemas.auth.signin import AuthTokens, SigninRequest, SigninResponse, UserInfo
+from app.model.models import User, UserSession
 from app.utils.security import InvalidCredentialsError, security_service
 
 
 class AuthService:
     @staticmethod
-    async def signin(*, db: AsyncIOMotorDatabase, payload: SigninRequest, request: Request) -> SigninResponse:
+    async def signin(*, db: AsyncSession, payload: SigninRequest, request: Request) -> SigninResponse:
         email = payload.email.strip().lower()
-        user = await db.users.find_one({"email": email})
+        await security_service.set_rls_context(db, bypass=True)
+        result = await db.execute(select(User).options(selectinload(User.role)).where(User.email == email))
+        user = result.scalar_one_or_none()
 
         # Avoid user enumeration by returning the same auth error path.
         if not user:
             raise InvalidCredentialsError("Invalid email or password")
 
-        if not user.get("is_active", True):
+        if user.status.value != "ACTIVE":
             raise InvalidCredentialsError("Invalid email or password")
 
         is_valid_password = security_service.verify_password(
             payload.password.get_secret_value(),
-            user.get("hashed_password", ""),
+            user.password_hash,
         )
         if not is_valid_password:
             raise InvalidCredentialsError("Invalid email or password")
@@ -35,26 +40,25 @@ class AuthService:
 
         refresh_token, session_id = await security_service.create_refresh_token(
             db=db,
-            user_id=user["_id"],
+            user_id=str(user.id),
             ip_address=client_host,
             user_agent=middleware_device_name or user_agent,
         )
         access_token = security_service.create_access_token(
-            user_id=str(user["_id"]),
+            user_id=str(user.id),
             session_id=session_id,
         )
 
         now = datetime.now(timezone.utc)
-        await db.users.update_one(
-            {"_id": user["_id"]},
-            {"$set": {"updated_at": now, "last_login_at": now}},
-        )
+        await security_service.set_rls_context(db, user_id=str(user.id), role=user.role.slug if getattr(user, "role", None) else "user", bypass=False)
+        await db.execute(update(User).where(User.id == user.id).values(updated_at=now, last_login_at=now))
+        await db.commit()
 
         return SigninResponse(
             data=UserInfo(
-                user_id=str(user["_id"]),
-                role=user["role"],
-                is_verified=user.get("is_verified", False),
+                user_id=str(user.id),
+                role=user.role.slug if getattr(user, "role", None) else "user",
+                is_verified=user.email_verified,
                 last_login_at=now,
             ),
             tokens=AuthTokens(
@@ -69,7 +73,7 @@ class AuthService:
         )
 
     @staticmethod
-    async def refresh_tokens(*, db: AsyncIOMotorDatabase, refresh_token: str, request: Request) -> dict[str, Any]:
+    async def refresh_tokens(*, db: AsyncSession, refresh_token: str, request: Request) -> dict[str, Any]:
         client_host = request.client.host if request.client else None
         middleware_device_name = getattr(request.state, "device_name", None)
         raw_user_agent = getattr(request.state, "user_agent_raw", None)
@@ -83,12 +87,13 @@ class AuthService:
         )
 
         payload = security_service.decode_token(new_refresh_token)
-        session = await db.refresh_sessions.find_one({"token_hash": security_service.hash_token(new_refresh_token)})
+        result = await db.execute(select(UserSession).where(UserSession.token_hash == security_service.hash_token(new_refresh_token)))
+        session = result.scalar_one_or_none()
         return {
             "access_token": access_token,
             "refresh_token": new_refresh_token,
             "session_id": payload.get("sid"),
-            "refresh_count": (session or {}).get("refresh_count", 0),
+            "refresh_count": getattr(session, "refresh_count", 0),
             "access_token_expires_in": security_service.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             "refresh_token_expires_in": security_service.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
         }

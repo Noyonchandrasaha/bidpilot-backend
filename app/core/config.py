@@ -1,5 +1,6 @@
 import ast
 import logging
+import os
 from functools import lru_cache
 from typing import List, Union, Literal
 from pydantic import Field, SecretStr, field_validator, ValidationInfo, model_validator
@@ -19,17 +20,15 @@ class Settings(BaseSettings):
     """
     Application Settings configured via environment variables.
     """
-    APP_NAME: str = Field(default="path_wise", description="Name of the application")
+    APP_NAME: str = Field(default="Ledger Tracker", description="Name of the application")
     ENVIRONMENT: Literal["development", "production", "testing"] = Field(default="development", description="Application environment (development, production, testing)")
     LOG_LEVEL: Literal["CRITICAL", "INFO", "ERROR", "WARNING", "DEBUG", "NOTSET"] = Field(default="INFO", description='Logging Level ("CRITICAL", "INFO", "ERROR", "WARNING", "DEBUG", "NOTSET")')
     CORS_ORIGINS: Union[List[str], str] = Field(default=['*'], description="List of CORS origin or '*' for all")
     TRUSTED_HOSTS: Union[List[str], str] = Field(default=["*"], description="List of trusted hosts or '*' for all")
     EXPOSE_DOCS: bool = Field(default=True, description="Whether to expose OpenAPI documentation.")
-    MONGO_DB_CONNECTION_STRING: SecretStr = Field(default=SecretStr(""), description="Write the Mongodb connection string")
-    DATABASE_NAME: str = Field(default="path_wise", description="Write the Mongodb Collection String.")
+    DATABASE_URL: SecretStr = Field(default=SecretStr("postgresql+asyncpg://postgres:postgres@localhost:5432/ledger_tracker"), description="Async PostgreSQL connection URL.")
+    DATABASE_NAME: str = Field(default="ledger_tracker", description="PostgreSQL database name.")
     APP_VERSION: str = Field(default="1.0.0", description="Application version exposed in health and metrics metadata.")
-    MONGO_MAX_POOL_SIZE: int = Field(default=50, ge=1, description="Maximum MongoDB connection pool size.")
-    MONGO_MIN_POOL_SIZE: int = Field(default=10, ge=0, description="Minimum MongoDB connection pool size.")
     REDIS_URL: str = Field(default="redis://localhost:6379", description="Redis connection URL")
     REDIS_HOST: str = Field(default="", description="Redis host (optional if REDIS_URL is set)")
     REDIS_PORT: int = Field(default=6379, ge=1, le=65535, description="Redis port")
@@ -43,7 +42,7 @@ class Settings(BaseSettings):
     JWT_PUBLIC_KEY: SecretStr = Field(description="This is the public key of jwt")
     JWT_ACTIVE_KID: str = Field(default="v1", description="Active JWT key id (kid)")
     SECRET_PEPPER: SecretStr = Field(description="This is the secret pepper")
-    TOKEN_HASH_SECRET: SecretStr = Field(description="Secret used for HMAC hashing refresh tokens")
+    TOKEN_HASH_SECRET: SecretStr = Field(default=SecretStr(""), description="Secret used for HMAC hashing refresh tokens")
     JWT_ISSUER:str = Field(default="myapp")
     JWT_AUDIENCE:str = Field(default="myapp_user")
     JWT_LEEWAY_SECONDS:int = Field(default=5)
@@ -72,6 +71,17 @@ class Settings(BaseSettings):
             if self.EXPOSE_DOCS:
                 raise ValueError("EXPOSE_DOCS must be False in production.")
         return self
+
+    @property
+    def database_url(self) -> str:
+        return self.DATABASE_URL.get_secret_value().strip()
+
+    @property
+    def token_hash_secret(self) -> str:
+        value = self.TOKEN_HASH_SECRET.get_secret_value().strip()
+        if value:
+            return value
+        return os.getenv("TOKEN_HASH_SECRET", "").strip()
 
 
     @property

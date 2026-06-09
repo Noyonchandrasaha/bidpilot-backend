@@ -5,7 +5,8 @@ pydantic_settings
 email-validator
 python-multipart
 python-dotenv
-motor
+sqlalchemy[asyncio]
+asyncpg
 user-agents
 structlog
 slowapi

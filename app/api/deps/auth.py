@@ -2,12 +2,14 @@ from typing import Callable
 import json
 from datetime import datetime
 
-from bson import ObjectId
 from fastapi import Depends, HTTPException, Request, status
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.db.connection import get_database
+from app.model.models import User
 from app.utils.enum.user import UserRole
 from app.utils.security import (
     InvalidTokenClaimsError,
@@ -23,7 +25,7 @@ USER_PROFILE_CACHE_TTL_SECONDS = 60
 
 def _serialize_user_for_cache(user: dict) -> str:
     payload = dict(user)
-    payload["_id"] = str(payload.get("_id"))
+    payload["id"] = str(payload.get("id"))
     for field in ("created_at", "updated_at", "last_login_at"):
         value = payload.get(field)
         if isinstance(value, datetime):
@@ -33,8 +35,6 @@ def _serialize_user_for_cache(user: dict) -> str:
 
 def _deserialize_user_from_cache(raw: str) -> dict:
     payload = json.loads(raw)
-    if payload.get("_id") and ObjectId.is_valid(payload["_id"]):
-        payload["_id"] = ObjectId(payload["_id"])
     for field in ("created_at", "updated_at", "last_login_at"):
         value = payload.get(field)
         if isinstance(value, str):
@@ -47,7 +47,7 @@ def _deserialize_user_from_cache(raw: str) -> dict:
 
 async def get_current_user(
     request: Request,
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    db: AsyncSession = Depends(get_database),
 ) -> dict:
     token = request.cookies.get("access_token")
     if not token:
@@ -69,8 +69,10 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired access token")
 
     user_id = payload.get("sub")
-    if not user_id or not ObjectId.is_valid(user_id):
+    if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
+
+    await security_service.set_rls_context(db, user_id=user_id, bypass=False)
 
     cache_key = f"user_profile:{user_id}"
     user = None
@@ -83,7 +85,25 @@ async def get_current_user(
         user = None
 
     if user is None:
-        user = await db.users.find_one({"_id": ObjectId(user_id)})
+        result = await db.execute(select(User).options(selectinload(User.role)).where(User.id == user_id))
+        user_obj = result.scalar_one_or_none()
+        if user_obj:
+            user = {
+                "id": str(user_obj.id),
+                "email": user_obj.email,
+                "role": user_obj.role.slug if getattr(user_obj, "role", None) else None,
+                "is_active": user_obj.status.value == "ACTIVE",
+                "is_verified": user_obj.email_verified,
+                "created_at": user_obj.created_at,
+                "updated_at": user_obj.updated_at,
+                "last_login_at": user_obj.last_login_at,
+            }
+            await security_service.set_rls_context(
+                db,
+                user_id=str(user_obj.id),
+                role=user_obj.role.slug if getattr(user_obj, "role", None) else "user",
+                bypass=False,
+            )
         if user:
             try:
                 await redis_client.setex(

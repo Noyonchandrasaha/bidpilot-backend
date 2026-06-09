@@ -1,151 +1,66 @@
-import asyncio
-from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import ASCENDING, DESCENDING, IndexModel
-from pymongo.collation import Collation
-from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import text
+
 from app.core.config import settings
 from app.core.logger import logger
 
-class MongoDBClient:
-    def __init__(
-        self,
-        mongodb_uri,
-        db_name: str,
-        max_pool_size: int = 50,
-        min_pool_size: int = 10,
-    ):
-        self.mongodb_uri = mongodb_uri
-        self.db_name = db_name
-        self.client: AsyncIOMotorClient | None = None
-        self.database = None
-        self.max_pool_size = max_pool_size
-        self.min_pool_size = min_pool_size
+
+class PostgreSQLClient:
+    def __init__(self, database_url: str):
+        self.database_url = database_url
+        self.engine = create_async_engine(
+            database_url,
+            pool_pre_ping=True,
+            future=True,
+        )
+        self.session_maker = async_sessionmaker(
+            bind=self.engine,
+            expire_on_commit=False,
+            class_=AsyncSession,
+        )
+
+    @asynccontextmanager
+    async def session(self):
+        async with self.session_maker() as db_session:
+            try:
+                yield db_session
+                await db_session.commit()
+            except Exception:
+                await db_session.rollback()
+                raise
 
     async def connect(self):
-        if not self.client:
-            try:
-                mongodb_uri_str = self.mongodb_uri.get_secret_value()
-                self.client = AsyncIOMotorClient(
-                    mongodb_uri_str,
-                    maxPoolSize=self.max_pool_size,
-                    minPoolSize=self.min_pool_size,
-                    serverSelectionTimeoutMS=5000,
-                    socketTimeoutMS=5000,
-                )
-
-                await self.client.admin.command("ping")
-                self.database = self.client[self.db_name]
-                await self.ensure_indexes()
-                logger.info("MongoDB connection established.")
-            except (ConnectionFailure, ServerSelectionTimeoutError) as exc:
-                logger.error(f"Could not connect to MongoDB: {exc}")
-                raise Exception(f"Could not connect to MongoDB: {exc}") from exc
-        return self.database
-
-    async def ensure_indexes(self):
-        if self.database is None:
-            raise Exception("Database not initialized. Call connect() first.")
-
-        # Backward-compatible migration:
-        # refresh_sessions.session_id cannot be unique when using token rotation
-        # that stores multiple rows for the same logical session.
-        existing_refresh_indexes = await self.database.refresh_sessions.index_information()
-        session_idx = existing_refresh_indexes.get("uq_refresh_session_id")
-        if session_idx and session_idx.get("unique", False):
-            await self.database.refresh_sessions.drop_index("uq_refresh_session_id")
-
-        # users collection indexes
-        await self.database.users.create_indexes([
-            IndexModel(
-                [("email", ASCENDING)],
-                name="uq_users_email",
-                unique=True,
-                collation=Collation(locale="en", strength=2),
-            ),
-            IndexModel(
-                [("role", ASCENDING), ("is_active", ASCENDING)],
-                name="ix_users_role_active",
-            ),
-        ])
-
-        # students collection indexes
-        await self.database.students.create_indexes([
-            IndexModel(
-                [("user_id", ASCENDING)],
-                name="uq_students_user_id",
-                unique=True,
-            ),
-            IndexModel(
-                [("created_at", DESCENDING)],
-                name="ix_students_created_at_desc",
-            ),
-        ])
-
-        # refresh_sessions collection indexes
-        await self.database.refresh_sessions.create_indexes([
-            IndexModel(
-                [("session_id", ASCENDING)],
-                name="ix_refresh_session_id",
-            ),
-            IndexModel(
-                [("token_jti", ASCENDING)],
-                name="uq_refresh_token_jti",
-                unique=True,
-            ),
-            IndexModel(
-                [("token_hash", ASCENDING)],
-                name="uq_refresh_token_hash",
-                unique=True,
-            ),
-            IndexModel(
-                [("user_id", ASCENDING), ("family_id", ASCENDING), ("revoked", ASCENDING)],
-                name="ix_refresh_user_family_revoked",
-            ),
-            IndexModel(
-                [("user_id", ASCENDING), ("revoked", ASCENDING), ("expires_at", ASCENDING)],
-                name="ix_refresh_user_revoked_exp",
-            ),
-            IndexModel(
-                [("expires_at", ASCENDING)],
-                name="ttl_refresh_expires_at",
-                expireAfterSeconds=0,
-            ),
-        ])
+        try:
+            async with self.engine.begin() as conn:
+                await conn.execute(text("SELECT 1"))
+            logger.info("PostgreSQL connection established.")
+        except Exception as exc:
+            logger.error("Could not connect to PostgreSQL: %s", exc)
+            raise RuntimeError(f"Could not connect to PostgreSQL: {exc}") from exc
 
     async def ping(self) -> bool:
-        if not self.client:
-            return False
         try:
-            await self.client.admin.command("ping")
+            async with self.engine.begin() as conn:
+                await conn.execute(text("SELECT 1"))
+            return True
         except Exception:
             return False
-        return True
 
     async def close(self):
-        if self.client:
-            try:
-                logger.info("Closing MongoDB connection.")
-                self.client.close()
-                self.client = None
-                self.database = None
-            except Exception as exc:
-                logger.error("Error while closing MongoDB connection: %s", exc)
-        else:
-            logger.warning("MongoDB client is not initialized, skipping close.")
-
-    def get_database(self):
-        if self.database is None:
-            raise Exception("Database not initialized. Call connect() first.")
-        return self.database
-
-db_client = MongoDBClient(
-    settings.MONGO_DB_CONNECTION_STRING,
-    settings.DATABASE_NAME,
-    max_pool_size=settings.MONGO_MAX_POOL_SIZE,
-    min_pool_size=settings.MONGO_MIN_POOL_SIZE,
-)
+        try:
+            logger.info("Closing PostgreSQL connection.")
+            await self.engine.dispose()
+        except Exception as exc:
+            logger.error("Error while closing PostgreSQL connection: %s", exc)
 
 
-def get_database():
-    return db_client.get_database()
+db_client = PostgreSQLClient(settings.database_url)
 
+
+async def get_database():
+    async with db_client.session() as db_session:
+        yield db_session

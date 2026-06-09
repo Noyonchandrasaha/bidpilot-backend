@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import datetime, timezone
 from redis.exceptions import ConnectionError as RedisConnectionError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas.auth.signin import SigninRequest, SigninResponse
 from app.api.schemas.auth.forget_password import (
@@ -40,7 +40,7 @@ async def signin(
     request: Request,
     response: Response,
     payload: SigninRequest,
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    db: AsyncSession = Depends(get_database),
 ):
     try:
         result = await auth_service.signin(db=db, payload=payload, request=request)
@@ -82,7 +82,7 @@ async def signin(
 async def signout(
     request: Request,
     response: Response,
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    db: AsyncSession = Depends(get_database),
 ):
     access_token = request.cookies.get("access_token")
     refresh_token = request.cookies.get("refresh_token")
@@ -126,7 +126,7 @@ async def signout(
 async def refresh_tokens(
     request: Request,
     response: Response,
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    db: AsyncSession = Depends(get_database),
 ):
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token:
@@ -183,7 +183,7 @@ async def refresh_tokens(
 
 @router.post("/forgot-password", response_model=APIResponse[ForgotPasswordResponse])
 @limiter.limit(AUTH_LIMIT)
-async def forgot_password(request: Request, payload: ForgotPasswordRequest, db: AsyncIOMotorDatabase = Depends(get_database)):
+async def forgot_password(request: Request, payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_database)):
     try:
         result = await forgot_password_service.request_reset(db=db, email=payload.email)
         return APIResponse(status="success", message="If the account exists, OTP has been generated", data=result)
@@ -222,7 +222,7 @@ async def resend_forgot_password_otp(request: Request, payload: ResendOTPRequest
 
 @router.post("/forgot-password/update-password", response_model=APIResponse[UpdatePasswordResponse])
 @limiter.limit(AUTH_LIMIT)
-async def update_forgot_password(request: Request, payload: UpdatePasswordRequest, db: AsyncIOMotorDatabase = Depends(get_database)):
+async def update_forgot_password(request: Request, payload: UpdatePasswordRequest, db: AsyncSession = Depends(get_database)):
     try:
         result = await forgot_password_service.update_password(
             db=db,
