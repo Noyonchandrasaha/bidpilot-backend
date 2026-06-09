@@ -4,5 +4,6 @@ from enum import Enum
 # User Role
 # -----------------------------------
 class UserRole(str, Enum):
-    ADMIN="ADMIN"
-    STUDENT="STUDENT"
+    ADMIN = "admin"
+    STAFF = "staff"
+    VIEWER = "viewer"

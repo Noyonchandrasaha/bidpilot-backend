@@ -90,6 +90,7 @@ async def get_current_user(
         if user_obj:
             user = {
                 "id": str(user_obj.id),
+                "name": user_obj.name,
                 "email": user_obj.email,
                 "role": user_obj.role.slug if getattr(user_obj, "role", None) else None,
                 "is_active": user_obj.status.value == "ACTIVE",

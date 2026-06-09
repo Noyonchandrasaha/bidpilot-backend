@@ -20,7 +20,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from app.core.rate_limit import limiter, AUTH_LIMIT, REGULAR_LIMIT, STRICT_LIMIT
 from app.utils.enum.user import UserRole
-from app.utils.security import security_service
+from app.utils.security import redis_client, security_service
 from app.api.routes.auth.signin import router as auth_router
 from app.api.routes.users.profile import router as user_router
 
@@ -84,12 +84,24 @@ async def init_database_schema() -> None:
     await bootstrap_rls(db_client.engine)
 
 
+async def check_redis_ready() -> None:
+    try:
+        if await redis_client.ping():
+            logger.info("Redis connection established.")
+            return
+        raise RuntimeError("Redis ping returned false")
+    except Exception as exc:
+        logger.error("Could not connect to Redis: %s", exc)
+        raise RuntimeError(f"Could not connect to Redis: {exc}") from exc
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"Starting up {settings.APP_NAME} in {settings.ENVIRONMENT} mode...")
     try:
         # Initialize dependencies
         await db_client.connect()
+        await check_redis_ready()
         await init_database_schema()
         await seed_admin_account()
         

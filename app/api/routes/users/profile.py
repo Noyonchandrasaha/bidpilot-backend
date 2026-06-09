@@ -14,8 +14,8 @@ router = APIRouter(prefix="/v1/users", tags=["Users"])
 @limiter.limit(REGULAR_LIMIT)
 async def get_me(request: Request, user: dict = Depends(get_current_user)):
     payload = MeResponse(
-        user_id=str(user["_id"]),
-        full_name=user["full_name"],
+        user_id=str(user["id"]),
+        name=user.get("name", ""),
         email=user["email"],
         role=user["role"],
         is_verified=user.get("is_verified", False),

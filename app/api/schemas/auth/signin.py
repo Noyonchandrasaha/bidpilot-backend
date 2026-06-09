@@ -154,7 +154,7 @@ class SigninResponse(BaseModel):
 
                 "data": {
                     "user_id": "665d1234567890abcdef9999",
-                    "role": "STUDENT",
+                    "role": "viewer",
                     "is_verified": True,
                     "last_login_at": "2026-05-17T12:00:00Z"
                 },

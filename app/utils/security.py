@@ -464,9 +464,13 @@ class SecurityService:
                 "Invalid access token"
             )
 
-        revoked = await redis_client.get(
-            f"revoked:{payload['jti']}"
-        )
+        try:
+            revoked = await redis_client.get(
+                f"revoked:{payload['jti']}"
+            )
+        except Exception:
+            # Redis is a revocation cache only; accept the JWT if Redis is unavailable.
+            revoked = None
 
         if revoked:
             raise TokenRevokedError(

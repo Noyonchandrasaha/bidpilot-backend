@@ -8,7 +8,7 @@ from app.utils.enum.user import UserRole
 
 class MeResponse(BaseModel):
     user_id: str = Field(..., description="Authenticated user id")
-    full_name: str = Field(..., description="User full name")
+    name: str = Field(..., description="User display name")
     email: EmailStr = Field(..., description="User email")
     role: UserRole = Field(..., description="User role")
     is_verified: bool = Field(..., description="Email verification status")
