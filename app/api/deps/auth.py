@@ -36,7 +36,12 @@ async def get_current_user(
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
 
-    user_doc = await db.users.find_one({"_id": user_id, "deleted_at": None})
+    try:
+        user_object_id = to_object_id(user_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
+
+    user_doc = await db.users.find_one({"_id": user_object_id, "deleted_at": None})
     role_doc = await db.roles.find_one({"_id": user_doc.get("role_id")}) if user_doc else None
     user = None
     if user_doc:

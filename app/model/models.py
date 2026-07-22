@@ -1,7 +1,9 @@
 import enum
 from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
+
+from bson import ObjectId
+from bson.errors import InvalidId
 
 
 class UserStatus(str, enum.Enum):
@@ -69,8 +71,17 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def new_document_id() -> str:
-    return str(uuid4())
+def new_document_id() -> ObjectId:
+    return ObjectId()
+
+
+def to_object_id(value: str | ObjectId) -> ObjectId:
+    if isinstance(value, ObjectId):
+        return value
+    try:
+        return ObjectId(value)
+    except (InvalidId, TypeError) as exc:
+        raise ValueError("Invalid ObjectId") from exc
 
 
 def serialize_document(document: dict[str, Any] | None) -> dict[str, Any] | None:

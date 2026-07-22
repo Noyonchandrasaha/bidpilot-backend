@@ -75,7 +75,7 @@ class ForgotPasswordService:
         if not user:
             reset_id = str(uuid4())
             reset_token = ForgotPasswordService._create_reset_token(
-                user_id=str(uuid4()),
+                user_id=str(new_document_id()),
                 reset_id=reset_id,
             )
             return ForgotPasswordResponse(
@@ -92,9 +92,9 @@ class ForgotPasswordService:
         now = datetime.now(timezone.utc)
 
         await db.password_resets.insert_one({
-            "_id": reset_id,
+            "_id": new_document_id(),
             "reset_id": reset_id,
-            "user_id": user_id,
+            "user_id": to_object_id(user_id),
             "otp_hash": otp_hash,
             "attempts": 0,
             "resend_after": now + timedelta(seconds=ForgotPasswordService.RESEND_COOLDOWN_SECONDS),
@@ -203,7 +203,7 @@ class ForgotPasswordService:
         user_id = payload["sub"]
         now = datetime.now(timezone.utc)
         result = await db.users.update_one(
-            {"_id": user_id},
+            {"_id": to_object_id(user_id)},
             {"$set": {"password_hash": security_service.hash_password(new_password), "updated_at": now}},
         )
         if result.modified_count != 1:

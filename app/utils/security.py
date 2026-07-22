@@ -16,7 +16,7 @@ from passlib.context import CryptContext
 from passlib.exc import InvalidHashError
 
 from app.core.config import settings
-from app.model.models import new_document_id
+from app.model.models import new_document_id, to_object_id
 
 from app.core.logger import logger
 
@@ -291,7 +291,7 @@ class SecurityService:
         await db.user_sessions.insert_one(
             {
                 "_id": new_document_id(),
-                "user_id": str(user_id),
+                "user_id": to_object_id(user_id),
                 "session_id": session_id,
                 "family_id": family_id,
                 "token_jti": jti,
@@ -539,7 +539,7 @@ class SecurityService:
         await db.user_sessions.insert_one(
             {
                 "_id": new_document_id(),
-                "user_id": str(old_session["user_id"]),
+                "user_id": old_session["user_id"],
                 "session_id": new_session_id,
                 "family_id": old_session["family_id"],
                 "token_jti": new_jti,
@@ -639,7 +639,7 @@ class SecurityService:
         user_id: str,
     ) -> None:
         await db.user_sessions.update_many(
-            {"user_id": str(user_id)},
+            {"user_id": to_object_id(user_id)},
             {"$set": {"revoked": True, "updated_at": datetime.now(timezone.utc)}},
         )
 
