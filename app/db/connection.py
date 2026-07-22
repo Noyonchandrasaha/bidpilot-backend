@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from pymongo import ASCENDING
+from pymongo import ASCENDING, DESCENDING, TEXT
 
 from app.core.config import settings
 from app.core.logger import logger
@@ -44,6 +44,64 @@ class MongoDBClient:
         await db.revoked_tokens.create_index("expires_at", expireAfterSeconds=0)
         await db.password_resets.create_index("reset_id", unique=True)
         await db.password_resets.create_index("expires_at", expireAfterSeconds=0)
+        await self.create_project_indexes()
+
+    async def create_project_indexes(self) -> None:
+        db = self.get_database()
+        await db.projects.create_index([("owner_id", ASCENDING), ("project_code", ASCENDING)], unique=True)
+        await db.projects.create_index(
+            [
+                ("owner_id", ASCENDING),
+                ("platform", ASCENDING),
+                ("status", ASCENDING),
+                ("updated_at", DESCENDING),
+            ]
+        )
+        await db.projects.create_index(
+            [("owner_id", ASCENDING), ("status", ASCENDING), ("deadline", ASCENDING)]
+        )
+        await db.projects.create_index([("owner_id", ASCENDING), ("last_activity_at", DESCENDING)])
+        await db.projects.create_index(
+            [("title", TEXT), ("client.name", TEXT), ("client.company_name", TEXT), ("tags", TEXT)],
+            name="project_text_search",
+        )
+
+        await db.project_contexts.create_index("project_id", unique=True)
+        await db.project_context_versions.create_index(
+            [("project_id", ASCENDING), ("version_number", ASCENDING)],
+            unique=True,
+        )
+
+        await db.project_messages.create_index([("project_id", ASCENDING), ("occurred_at", DESCENDING)])
+        await db.project_messages.create_index(
+            [("project_id", ASCENDING), ("status", ASCENDING), ("occurred_at", DESCENDING)]
+        )
+        await db.project_message_versions.create_index(
+            [("message_id", ASCENDING), ("version_number", ASCENDING)],
+            unique=True,
+        )
+
+        await db.project_documents.create_index([("project_id", ASCENDING), ("updated_at", DESCENDING)])
+        await db.project_documents.create_index(
+            [("project_id", ASCENDING), ("document_type", ASCENDING), ("status", ASCENDING)]
+        )
+        await db.project_document_versions.create_index(
+            [("document_id", ASCENDING), ("version_number", ASCENDING)],
+            unique=True,
+        )
+
+        await db.project_files.create_index([("project_id", ASCENDING), ("created_at", DESCENDING)])
+        await db.project_files.create_index(
+            [("linked_entity.type", ASCENDING), ("linked_entity.id", ASCENDING)]
+        )
+        await db.project_activities.create_index([("project_id", ASCENDING), ("occurred_at", DESCENDING)])
+
+        await db.templates.create_index("code", unique=True)
+        await db.templates.create_index([("platform", ASCENDING), ("is_active", ASCENDING)])
+        await db.platform_template_settings.create_index(
+            [("owner_id", ASCENDING), ("platform", ASCENDING)],
+            unique=True,
+        )
 
     async def ping(self) -> bool:
         try:
