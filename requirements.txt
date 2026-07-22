@@ -5,13 +5,12 @@ pydantic_settings
 email-validator
 python-multipart
 python-dotenv
-sqlalchemy[asyncio]
-asyncpg
+motor
+pymongo
 user-agents
 structlog
 slowapi
 orjson
-redis
 passlib[argon2]
 argon2-cffi
 pyjwt 

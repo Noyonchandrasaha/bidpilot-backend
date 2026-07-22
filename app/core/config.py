@@ -1,7 +1,6 @@
 import ast
 import logging
 import os
-from functools import lru_cache
 from typing import List, Union, Literal
 from pydantic import Field, SecretStr, field_validator, ValidationInfo, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -20,20 +19,15 @@ class Settings(BaseSettings):
     """
     Application Settings configured via environment variables.
     """
-    APP_NAME: str = Field(default="Ledger Tracker", description="Name of the application")
+    APP_NAME: str = Field(default="BidPilot_backend", description="Name of the application")
     ENVIRONMENT: Literal["development", "production", "testing"] = Field(default="development", description="Application environment (development, production, testing)")
     LOG_LEVEL: Literal["CRITICAL", "INFO", "ERROR", "WARNING", "DEBUG", "NOTSET"] = Field(default="INFO", description='Logging Level ("CRITICAL", "INFO", "ERROR", "WARNING", "DEBUG", "NOTSET")')
     CORS_ORIGINS: Union[List[str], str] = Field(default=['*'], description="List of CORS origin or '*' for all")
     TRUSTED_HOSTS: Union[List[str], str] = Field(default=["*"], description="List of trusted hosts or '*' for all")
     EXPOSE_DOCS: bool = Field(default=True, description="Whether to expose OpenAPI documentation.")
-    DATABASE_URL: SecretStr = Field(default=SecretStr("postgresql+asyncpg://postgres:postgres@localhost:5432/ledger_tracker"), description="Async PostgreSQL connection URL.")
-    DATABASE_NAME: str = Field(default="ledger_tracker", description="PostgreSQL database name.")
+    DATABASE_URL: SecretStr = Field(default=SecretStr("mongodb://localhost:27017"), description="MongoDB connection URL.")
+    DATABASE_NAME: str = Field(default="BidPilot_backend", description="MongoDB database name.")
     APP_VERSION: str = Field(default="1.0.0", description="Application version exposed in health and metrics metadata.")
-    REDIS_URL: str = Field(default="redis://localhost:6379", description="Redis connection URL")
-    REDIS_HOST: str = Field(default="", description="Redis host (optional if REDIS_URL is set)")
-    REDIS_PORT: int = Field(default=6379, ge=1, le=65535, description="Redis port")
-    REDIS_PASSWORD: SecretStr = Field(default=SecretStr(""), description="Redis password")
-    REDIS_SSL: bool = Field(default=False, description="This is redis SSL")
 
     ADMIN_EMAIL: str = Field(default="admin@example.com")
     ADMIN_PASSWORD: str = Field(default="ASDFqwer!234")
@@ -43,8 +37,8 @@ class Settings(BaseSettings):
     JWT_ACTIVE_KID: str = Field(default="v1", description="Active JWT key id (kid)")
     SECRET_PEPPER: SecretStr = Field(description="This is the secret pepper")
     TOKEN_HASH_SECRET: SecretStr = Field(default=SecretStr(""), description="Secret used for HMAC hashing refresh tokens")
-    JWT_ISSUER:str = Field(default="myapp")
-    JWT_AUDIENCE:str = Field(default="myapp_user")
+    JWT_ISSUER:str = Field(default="BidPilot_backend")
+    JWT_AUDIENCE:str = Field(default="BidPilot_backend_user")
     JWT_LEEWAY_SECONDS:int = Field(default=5)
 
     ACCESS_TOKEN_EXPIRE_MINUTES:int = Field(default=15)
@@ -63,6 +57,16 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_security_constraints(self) -> "Settings":
+        required_secrets = {
+            "JWT_PRIVATE_KEY": self.JWT_PRIVATE_KEY.get_secret_value().strip(),
+            "JWT_PUBLIC_KEY": self.JWT_PUBLIC_KEY.get_secret_value().strip(),
+            "SECRET_PEPPER": self.SECRET_PEPPER.get_secret_value().strip(),
+            "TOKEN_HASH_SECRET": self.token_hash_secret,
+        }
+        missing_secrets = [name for name, value in required_secrets.items() if not value]
+        if missing_secrets:
+            raise ValueError(f"Missing required security settings: {', '.join(missing_secrets)}")
+
         if self.ENVIRONMENT == "production":
             if self.CORS_ORIGINS == ["*"] or self.CORS_ORIGINS == "*":
                 raise ValueError("CORS_ORIGINS cannot be '*' in production.")
@@ -70,6 +74,8 @@ class Settings(BaseSettings):
                 raise ValueError("TRUSTED_HOSTS cannot be '*' in production.")
             if self.EXPOSE_DOCS:
                 raise ValueError("EXPOSE_DOCS must be False in production.")
+            if self.ADMIN_EMAIL == "admin@example.com" or self.ADMIN_PASSWORD == "ASDFqwer!234":
+                raise ValueError("Default admin credentials cannot be used in production.")
         return self
 
     @property
@@ -99,12 +105,9 @@ class Settings(BaseSettings):
         case_sensitive=True
     )
 
-@lru_cache
 def get_settings() -> Settings:
     """
-    Get application settings. This function is cached to prevent
-    repeatedly reading the .env file and re-validating settings on every function call.
-    Uses lru_cache for high-performance dependency injection in FastAPI.
+    Get application settings from environment variables.
     """
     return Settings()
 

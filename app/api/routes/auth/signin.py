@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from datetime import datetime, timezone
-from redis.exceptions import ConnectionError as RedisConnectionError
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.schemas.auth.signin import SigninRequest, SigninResponse
 from app.api.schemas.auth.forget_password import (
@@ -34,13 +33,20 @@ from app.core.rate_limit import AUTH_LIMIT, limiter
 router = APIRouter(prefix="/v1/auth", tags=["Auth"])
 
 
+def _get_bearer_token(request: Request) -> str | None:
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header.split(" ", 1)[1].strip()
+    return None
+
+
 @router.post("/signin", response_model=APIResponse[SigninResponse])
 @limiter.limit(AUTH_LIMIT)
 async def signin(
     request: Request,
     response: Response,
     payload: SigninRequest,
-    db: AsyncSession = Depends(get_database),
+    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     try:
         result = await auth_service.signin(db=db, payload=payload, request=request)
@@ -82,9 +88,9 @@ async def signin(
 async def signout(
     request: Request,
     response: Response,
-    db: AsyncSession = Depends(get_database),
+    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
-    access_token = request.cookies.get("access_token")
+    access_token = request.cookies.get("access_token") or _get_bearer_token(request)
     refresh_token = request.cookies.get("refresh_token")
 
     if refresh_token:
@@ -126,7 +132,7 @@ async def signout(
 async def refresh_tokens(
     request: Request,
     response: Response,
-    db: AsyncSession = Depends(get_database),
+    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token:
@@ -183,55 +189,31 @@ async def refresh_tokens(
 
 @router.post("/forgot-password", response_model=APIResponse[ForgotPasswordResponse])
 @limiter.limit(AUTH_LIMIT)
-async def forgot_password(request: Request, payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_database)):
-    try:
-        result = await forgot_password_service.request_reset(db=db, email=payload.email)
-        return APIResponse(status="success", message="If the account exists, OTP has been generated", data=result)
-    except RedisConnectionError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Password reset service is temporarily unavailable",
-        )
+async def forgot_password(request: Request, payload: ForgotPasswordRequest, db: AsyncIOMotorDatabase = Depends(get_database)):
+    result = await forgot_password_service.request_reset(db=db, email=payload.email)
+    return APIResponse(status="success", message="If the account exists, OTP has been generated", data=result)
 
 
 @router.post("/forgot-password/verify-otp", response_model=APIResponse[OTPVerificationResponse])
 @limiter.limit(AUTH_LIMIT)
-async def verify_forgot_password_otp(request: Request, payload: OTPVerificationRequest):
-    try:
-        result = await forgot_password_service.verify_otp(otp=payload.otp, reset_token=payload.reset_token)
-        return APIResponse(status="success", message="OTP verified successfully", data=result)
-    except RedisConnectionError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OTP verification service is temporarily unavailable",
-        )
+async def verify_forgot_password_otp(request: Request, payload: OTPVerificationRequest, db: AsyncIOMotorDatabase = Depends(get_database)):
+    result = await forgot_password_service.verify_otp(db=db, otp=payload.otp, reset_token=payload.reset_token)
+    return APIResponse(status="success", message="OTP verified successfully", data=result)
 
 
 @router.post("/forgot-password/resend-otp", response_model=APIResponse[ResendOTPResponse])
 @limiter.limit(AUTH_LIMIT)
-async def resend_forgot_password_otp(request: Request, payload: ResendOTPRequest):
-    try:
-        result = await forgot_password_service.resend_otp(reset_token=payload.reset_token)
-        return APIResponse(status="success", message="OTP resent successfully", data=result)
-    except RedisConnectionError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OTP resend service is temporarily unavailable",
-        )
+async def resend_forgot_password_otp(request: Request, payload: ResendOTPRequest, db: AsyncIOMotorDatabase = Depends(get_database)):
+    result = await forgot_password_service.resend_otp(db=db, reset_token=payload.reset_token)
+    return APIResponse(status="success", message="OTP resent successfully", data=result)
 
 
 @router.post("/forgot-password/update-password", response_model=APIResponse[UpdatePasswordResponse])
 @limiter.limit(AUTH_LIMIT)
-async def update_forgot_password(request: Request, payload: UpdatePasswordRequest, db: AsyncSession = Depends(get_database)):
-    try:
-        result = await forgot_password_service.update_password(
-            db=db,
-            verified_reset_token=payload.verified_reset_token,
-            new_password=payload.new_password.get_secret_value(),
-        )
-        return APIResponse(status="success", message="Password updated successfully", data=result)
-    except RedisConnectionError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Password update service is temporarily unavailable",
-        )
+async def update_forgot_password(request: Request, payload: UpdatePasswordRequest, db: AsyncIOMotorDatabase = Depends(get_database)):
+    result = await forgot_password_service.update_password(
+        db=db,
+        verified_reset_token=payload.verified_reset_token,
+        new_password=payload.new_password.get_secret_value(),
+    )
+    return APIResponse(status="success", message="Password updated successfully", data=result)

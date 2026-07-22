@@ -7,20 +7,16 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
 from app.api.schemas.response import APIErrorResponse, APIResponse, ErrorDetail
 from app.core.config import settings
 from app.core.logger import logger
 from app.db.connection import db_client
-from app.db.rls import bootstrap_rls
-from app.model.models import Base, Role, User, UserStatus
+from app.model.models import UserStatus, new_document_id
 from user_agents import parse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from app.core.rate_limit import limiter, AUTH_LIMIT, REGULAR_LIMIT, STRICT_LIMIT
-from app.utils.enum.user import UserRole
-from app.utils.security import redis_client, security_service
+from app.core.rate_limit import limiter, REGULAR_LIMIT
+from app.utils.security import security_service
 from app.api.routes.auth.signin import router as auth_router
 from app.api.routes.users.profile import router as user_router
 
@@ -34,65 +30,43 @@ async def seed_admin_account() -> None:
         return
 
     now = datetime.now(timezone.utc)
-    async with db_client.session() as db:
-        await security_service.set_rls_context(db, bypass=True)
-        role_result = await db.execute(select(Role).where(Role.slug == "admin"))
-        admin_role = role_result.scalar_one_or_none()
-        if admin_role is None:
-            admin_role = Role(
-                name="Admin",
-                slug="admin",
-                description="System administrator role",
-                is_system=True,
-            )
-            db.add(admin_role)
-            await db.flush()
+    db = db_client.get_database()
+    admin_role = await db.roles.find_one({"slug": "admin"})
+    if admin_role is None:
+        admin_role = {
+            "_id": new_document_id(),
+            "name": "Admin",
+            "slug": "admin",
+            "description": "System administrator role",
+            "is_system": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await db.roles.insert_one(admin_role)
 
-        user_result = await db.execute(select(User).where(User.email == admin_email))
-        existing_admin = user_result.scalar_one_or_none()
-
-        if existing_admin:
-            existing_admin.role_id = admin_role.id
-            existing_admin.name = "System Admin"
-            existing_admin.password_hash = security_service.hash_password(admin_password)
-            existing_admin.status = UserStatus.ACTIVE
-            existing_admin.email_verified = True
-            existing_admin.updated_at = now
-            if not existing_admin.created_at:
-                existing_admin.created_at = now
-            logger.info("admin_seed_updated_existing", extra={"email": admin_email})
-            return
-
-        db.add(
-            User(
-                role_id=admin_role.id,
-                name="System Admin",
-                email=admin_email,
-                password_hash=security_service.hash_password(admin_password),
-                status=UserStatus.ACTIVE,
-                email_verified=True,
-                created_at=now,
-                updated_at=now,
-            )
+    existing_admin = await db.users.find_one({"email": admin_email})
+    admin_payload = {
+        "role_id": admin_role["_id"],
+        "name": "System Admin",
+        "email": admin_email,
+        "password_hash": security_service.hash_password(admin_password),
+        "status": UserStatus.ACTIVE.value,
+        "email_verified": True,
+        "updated_at": now,
+        "deleted_at": None,
+    }
+    if existing_admin:
+        await db.users.update_one(
+            {"_id": existing_admin["_id"]},
+            {"$set": admin_payload},
         )
-        logger.info("admin_seed_created", extra={"email": admin_email})
+        logger.info("admin_seed_updated_existing", extra={"email": admin_email})
+        return
 
-
-async def init_database_schema() -> None:
-    async with db_client.engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    await bootstrap_rls(db_client.engine)
-
-
-async def check_redis_ready() -> None:
-    try:
-        if await redis_client.ping():
-            logger.info("Redis connection established.")
-            return
-        raise RuntimeError("Redis ping returned false")
-    except Exception as exc:
-        logger.error("Could not connect to Redis: %s", exc)
-        raise RuntimeError(f"Could not connect to Redis: {exc}") from exc
+    admin_payload["_id"] = new_document_id()
+    admin_payload["created_at"] = now
+    await db.users.insert_one(admin_payload)
+    logger.info("admin_seed_created", extra={"email": admin_email})
 
 
 @asynccontextmanager
@@ -101,8 +75,6 @@ async def lifespan(app: FastAPI):
     try:
         # Initialize dependencies
         await db_client.connect()
-        await check_redis_ready()
-        await init_database_schema()
         await seed_admin_account()
         
         yield
@@ -113,7 +85,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.APP_NAME,
-        description="Production grade FastAPI application",
+        description="BidPilot_backend API",
         version=settings.APP_VERSION,
         docs_url="/docs" if settings.EXPOSE_DOCS else None,
         redoc_url="/redoc" if settings.EXPOSE_DOCS else None,

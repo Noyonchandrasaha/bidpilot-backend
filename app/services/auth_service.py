@@ -2,36 +2,34 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Request
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.schemas.auth.signin import AuthTokens, SigninRequest, SigninResponse, UserInfo
-from app.model.models import User, UserSession
 from app.utils.security import InvalidCredentialsError, security_service
 
 
 class AuthService:
     @staticmethod
-    async def signin(*, db: AsyncSession, payload: SigninRequest, request: Request) -> SigninResponse:
+    async def signin(*, db: AsyncIOMotorDatabase, payload: SigninRequest, request: Request) -> SigninResponse:
         email = payload.email.strip().lower()
-        await security_service.set_rls_context(db, bypass=True)
-        result = await db.execute(select(User).options(selectinload(User.role)).where(User.email == email))
-        user = result.scalar_one_or_none()
+        user = await db.users.find_one({"email": email, "deleted_at": None})
 
         # Avoid user enumeration by returning the same auth error path.
         if not user:
             raise InvalidCredentialsError("Invalid email or password")
 
-        if user.status.value != "ACTIVE":
+        if user.get("status") != "ACTIVE":
             raise InvalidCredentialsError("Invalid email or password")
 
         is_valid_password = security_service.verify_password(
             payload.password.get_secret_value(),
-            user.password_hash,
+            user["password_hash"],
         )
         if not is_valid_password:
             raise InvalidCredentialsError("Invalid email or password")
+
+        role = await db.roles.find_one({"_id": user.get("role_id")})
+        role_slug = role["slug"] if role else "user"
 
         client_host = request.client.host if request.client else None
         middleware_device_name = getattr(request.state, "device_name", None)
@@ -40,25 +38,23 @@ class AuthService:
 
         refresh_token, session_id = await security_service.create_refresh_token(
             db=db,
-            user_id=str(user.id),
+            user_id=str(user["_id"]),
             ip_address=client_host,
             user_agent=middleware_device_name or user_agent,
         )
         access_token = security_service.create_access_token(
-            user_id=str(user.id),
+            user_id=str(user["_id"]),
             session_id=session_id,
         )
 
         now = datetime.now(timezone.utc)
-        await security_service.set_rls_context(db, user_id=str(user.id), role=user.role.slug if getattr(user, "role", None) else "user", bypass=False)
-        await db.execute(update(User).where(User.id == user.id).values(updated_at=now, last_login_at=now))
-        await db.commit()
+        await db.users.update_one({"_id": user["_id"]}, {"$set": {"updated_at": now, "last_login_at": now}})
 
         return SigninResponse(
             data=UserInfo(
-                user_id=str(user.id),
-                role=user.role.slug if getattr(user, "role", None) else "user",
-                is_verified=user.email_verified,
+                user_id=str(user["_id"]),
+                role=role_slug,
+                is_verified=user.get("email_verified", False),
                 last_login_at=now,
             ),
             tokens=AuthTokens(
@@ -73,7 +69,7 @@ class AuthService:
         )
 
     @staticmethod
-    async def refresh_tokens(*, db: AsyncSession, refresh_token: str, request: Request) -> dict[str, Any]:
+    async def refresh_tokens(*, db: AsyncIOMotorDatabase, refresh_token: str, request: Request) -> dict[str, Any]:
         client_host = request.client.host if request.client else None
         middleware_device_name = getattr(request.state, "device_name", None)
         raw_user_agent = getattr(request.state, "user_agent_raw", None)
@@ -87,13 +83,12 @@ class AuthService:
         )
 
         payload = security_service.decode_token(new_refresh_token)
-        result = await db.execute(select(UserSession).where(UserSession.token_hash == security_service.hash_token(new_refresh_token)))
-        session = result.scalar_one_or_none()
+        session = await db.user_sessions.find_one({"token_hash": security_service.hash_token(new_refresh_token)})
         return {
             "access_token": access_token,
             "refresh_token": new_refresh_token,
             "session_id": payload.get("sid"),
-            "refresh_count": getattr(session, "refresh_count", 0),
+            "refresh_count": session.get("refresh_count", 0) if session else 0,
             "access_token_expires_in": security_service.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             "refresh_token_expires_in": security_service.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
         }

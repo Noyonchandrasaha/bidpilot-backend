@@ -1,25 +1,19 @@
 services:
-  redis:
-    image: redis:7.2-alpine
-    container_name: ledger_tracker_redis
+  mongodb:
+    image: mongo:7
+    container_name: BidPilot_backend_mongodb
     restart: unless-stopped
-    command: [
-      "redis-server",
-      "--appendonly", "yes",
-      "--appendfsync", "everysec",
-      "--requirepass", "${REDIS_PASSWORD}"
-    ]
     ports:
-      - "6380:6379"
+      - "27017:27017"
     volumes:
-      - redis_data:/data
+      - mongodb_data:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD} ping | grep PONG"]
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
 
 volumes:
-  redis_data:
+  mongodb_data:
     driver: local

@@ -5,9 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import uuid4
 import jwt
-import redis.asyncio as redis
-from sqlalchemy import delete, select, text, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from jwt import (
     ExpiredSignatureError,
     InvalidAudienceError,
@@ -18,8 +16,7 @@ from passlib.context import CryptContext
 from passlib.exc import InvalidHashError
 
 from app.core.config import settings
-from app.model.models import UserSession
-
+from app.model.models import new_document_id
 
 from app.core.logger import logger
 
@@ -62,49 +59,6 @@ class InvalidSessionError(SecurityError):
 
 class CSRFValidationError(SecurityError):
     pass
-
-
-# =========================================================
-# REDIS
-# =========================================================
-
-try:
-    if settings.REDIS_URL:
-        redis_client = redis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-        )
-    else:
-        redis_client = redis.Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            password=settings.REDIS_PASSWORD.get_secret_value() or None,
-            ssl=settings.REDIS_SSL,
-            decode_responses=True,
-        )
-except ValueError:
-    # Fallback for malformed REDIS_URL (commonly from non-URL-encoded passwords).
-    redis_client = redis.Redis(
-        host=settings.REDIS_HOST,
-        port=settings.REDIS_PORT,
-        password=settings.REDIS_PASSWORD.get_secret_value() or None,
-        ssl=settings.REDIS_SSL,
-        decode_responses=True,
-    )
-
-# Safety override for local/dev Redis endpoints that are not TLS-enabled.
-if (
-    settings.REDIS_HOST in {"localhost", "127.0.0.1"}
-    or settings.REDIS_URL.startswith("redis://localhost")
-    or settings.REDIS_URL.startswith("redis://127.0.0.1")
-):
-    redis_client = redis.Redis(
-        host=settings.REDIS_HOST or "localhost",
-        port=settings.REDIS_PORT,
-        password=settings.REDIS_PASSWORD.get_secret_value() or None,
-        ssl=False,
-        decode_responses=True,
-    )
 
 
 # =========================================================
@@ -174,33 +128,10 @@ class SecurityService:
     # =====================================================
 
     @classmethod
-    async def set_rls_context(
-        cls,
-        db: AsyncSession,
-        *,
-        user_id: str | None = None,
-        role: str | None = None,
-        bypass: bool = False,
-    ) -> None:
-        await db.execute(
-            text(
-                "SELECT "
-                "set_config('app.rls_bypass', :bypass, true), "
-                "set_config('app.current_user_id', COALESCE(:user_id, ''), true), "
-                "set_config('app.current_role', COALESCE(:role, ''), true)"
-            ),
-            {
-                "bypass": "on" if bypass else "off",
-                "user_id": user_id or "",
-                "role": role or "",
-            },
-        )
-
-    @classmethod
     def hash_password(cls, password: str) -> str:
 
         peppered = (
-            f"{password}{settings.SECRET_PEPPER}"
+            f"{password}{settings.SECRET_PEPPER.get_secret_value()}"
         )
 
         return cls.pwd_context.hash(peppered)
@@ -216,7 +147,7 @@ class SecurityService:
 
             peppered = (
                 f"{plain_password}"
-                f"{settings.SECRET_PEPPER}"
+                f"{settings.SECRET_PEPPER.get_secret_value()}"
             )
 
             return cls.pwd_context.verify(
@@ -337,7 +268,7 @@ class SecurityService:
     async def create_refresh_token(
         cls,
         *,
-        db: AsyncSession,
+        db: AsyncIOMotorDatabase,
         user_id: str,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
@@ -356,25 +287,26 @@ class SecurityService:
             ),
         )
 
-        await cls.set_rls_context(db, user_id=str(user_id), bypass=True)
-
-        db.add(UserSession(
-            user_id=user_id,
-            session_id=session_id,
-            family_id=family_id,
-            token_jti=jti,
-            token_hash=cls.hash_token(token),
-            revoked=False,
-            reused=False,
-            refresh_count=0,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-            last_used_at=datetime.now(timezone.utc),
-            expires_at=datetime.now(timezone.utc) + timedelta(days=cls.REFRESH_TOKEN_EXPIRE_DAYS),
-        ))
-        await db.commit()
+        now = datetime.now(timezone.utc)
+        await db.user_sessions.insert_one(
+            {
+                "_id": new_document_id(),
+                "user_id": str(user_id),
+                "session_id": session_id,
+                "family_id": family_id,
+                "token_jti": jti,
+                "token_hash": cls.hash_token(token),
+                "revoked": False,
+                "reused": False,
+                "refresh_count": 0,
+                "ip_address": ip_address,
+                "user_agent": user_agent,
+                "created_at": now,
+                "updated_at": now,
+                "last_used_at": now,
+                "expires_at": now + timedelta(days=cls.REFRESH_TOKEN_EXPIRE_DAYS),
+            }
+        )
 
         logger.info(
             "refresh_token_created",
@@ -464,15 +396,11 @@ class SecurityService:
                 "Invalid access token"
             )
 
-        try:
-            revoked = await redis_client.get(
-                f"revoked:{payload['jti']}"
-            )
-        except Exception:
-            # Redis is a revocation cache only; accept the JWT if Redis is unavailable.
-            revoked = None
+        from app.db.connection import db_client
 
-        if revoked:
+        db = db_client.get_database()
+        revoked = await db.revoked_tokens.find_one({"jti": payload["jti"]})
+        if revoked is not None:
             raise TokenRevokedError(
                 "Access token revoked"
             )
@@ -487,7 +415,7 @@ class SecurityService:
     async def verify_refresh_token(
         cls,
         *,
-        db: AsyncSession,
+        db: AsyncIOMotorDatabase,
         token: str,
     ) -> dict[str, Any]:
 
@@ -501,37 +429,34 @@ class SecurityService:
             )
 
         token_hash = cls.hash_token(token)
-        await cls.set_rls_context(db, user_id=payload["sub"], bypass=False)
-
-        result = await db.execute(select(UserSession).where(UserSession.token_hash == token_hash))
-        session = result.scalar_one_or_none()
+        session = await db.user_sessions.find_one({"token_hash": token_hash})
 
         if not session:
             raise InvalidSessionError(
                 "Refresh session not found"
             )
 
-        if session.revoked:
+        if session.get("revoked"):
             raise TokenRevokedError(
                 "Refresh token revoked"
             )
 
-        if session.reused:
+        if session.get("reused"):
             raise TokenReuseDetectedError(
                 "Replay attack detected"
             )
 
-        if str(session.user_id) != payload["sub"]:
+        if str(session.get("user_id")) != payload["sub"]:
             raise InvalidSessionError(
                 "Refresh token subject mismatch"
             )
 
-        if session.session_id != payload.get("sid"):
+        if session.get("session_id") != payload.get("sid"):
             raise InvalidSessionError(
                 "Refresh token session mismatch"
             )
 
-        if session.family_id != payload.get("family_id"):
+        if session.get("family_id") != payload.get("family_id"):
             raise InvalidSessionError(
                 "Refresh token family mismatch"
             )
@@ -546,7 +471,7 @@ class SecurityService:
     async def rotate_refresh_token(
         cls,
         *,
-        db: AsyncSession,
+        db: AsyncIOMotorDatabase,
         refresh_token: str,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
@@ -563,66 +488,86 @@ class SecurityService:
             refresh_token
         )
 
-        await cls.set_rls_context(db, user_id=payload["sub"], bypass=False)
-
-        result = await db.execute(select(UserSession).where(UserSession.token_hash == old_token_hash))
-        old_session = result.scalar_one_or_none()
+        old_session = await db.user_sessions.find_one({"token_hash": old_token_hash})
 
         if not old_session:
             raise InvalidSessionError()
 
-        if old_session.revoked:
-            await db.execute(update(UserSession).where(UserSession.family_id == old_session.family_id).values(revoked=True, reused=True))
-            await db.commit()
+        if old_session.get("revoked"):
+            await db.user_sessions.update_many(
+                {"family_id": old_session["family_id"]},
+                {"$set": {"revoked": True, "reused": True, "updated_at": datetime.now(timezone.utc)}},
+            )
             logger.warning(
                 "refresh_reuse_detected",
             extra={
-                    "family_id": old_session.family_id,
-                    "user_id": old_session.user_id,
+                    "family_id": old_session["family_id"],
+                    "user_id": old_session["user_id"],
                 },
             )
             raise TokenReuseDetectedError("Replay attack detected")
 
+        new_session_id = str(uuid4())
         new_token, new_jti = cls._create_token(
-            subject=str(old_session.user_id),
+            subject=str(old_session["user_id"]),
             token_type=cls.REFRESH_TOKEN_TYPE,
-            family_id=old_session.family_id,
-            session_id=old_session.session_id,
+            family_id=old_session["family_id"],
+            session_id=new_session_id,
             expires_delta=timedelta(
                 days=cls.REFRESH_TOKEN_EXPIRE_DAYS
             ),
         )
         now = datetime.now(timezone.utc)
-        result = await db.execute(
-            update(UserSession)
-            .where(UserSession.id == old_session.id, UserSession.token_hash == old_token_hash, UserSession.revoked.is_(False))
-            .values(
-                token_jti=new_jti,
-                token_hash=cls.hash_token(new_token),
-                last_used_at=now,
-                updated_at=now,
-                expires_at=now + timedelta(days=cls.REFRESH_TOKEN_EXPIRE_DAYS),
-                ip_address=ip_address,
-                user_agent=user_agent,
-                refresh_count=UserSession.refresh_count + 1,
-            )
+        result = await db.user_sessions.update_one(
+            {
+                "_id": old_session["_id"],
+                "token_hash": old_token_hash,
+                "revoked": False,
+            },
+            {
+                "$set": {
+                    "revoked": True,
+                    "last_used_at": now,
+                    "updated_at": now,
+                },
+            },
         )
-        await db.commit()
-        if result.rowcount != 1:
+        if result.modified_count != 1:
             raise TokenReuseDetectedError("Replay attack detected")
 
+        refresh_count = int(old_session.get("refresh_count", 0)) + 1
+        await db.user_sessions.insert_one(
+            {
+                "_id": new_document_id(),
+                "user_id": str(old_session["user_id"]),
+                "session_id": new_session_id,
+                "family_id": old_session["family_id"],
+                "token_jti": new_jti,
+                "token_hash": cls.hash_token(new_token),
+                "revoked": False,
+                "reused": False,
+                "refresh_count": refresh_count,
+                "ip_address": ip_address,
+                "user_agent": user_agent,
+                "created_at": old_session.get("created_at", now),
+                "updated_at": now,
+                "last_used_at": now,
+                "expires_at": now + timedelta(days=cls.REFRESH_TOKEN_EXPIRE_DAYS),
+            }
+        )
+
         access_token = cls.create_access_token(
-            user_id=str(old_session.user_id),
-            session_id=old_session.session_id,
+            user_id=str(old_session["user_id"]),
+            session_id=new_session_id,
         )
 
         logger.info(
             "refresh_rotated",
             extra={
                 "user_id":
-                    old_session.user_id,
+                    old_session["user_id"],
                 "session_id":
-                    old_session.session_id,
+                    new_session_id,
             },
         )
 
@@ -650,10 +595,13 @@ class SecurityService:
         if ttl <= 0:
             return
 
-        await redis_client.setex(
-            f"revoked:{jti}",
-            ttl,
-            "1",
+        from app.db.connection import db_client
+
+        db = db_client.get_database()
+        await db.revoked_tokens.update_one(
+            {"jti": jti},
+            {"$set": {"jti": jti, "expires_at": expires_at, "created_at": datetime.now(timezone.utc)}},
+            upsert=True,
         )
 
     # =====================================================
@@ -664,12 +612,13 @@ class SecurityService:
     async def revoke_session(
         cls,
         *,
-        db: AsyncSession,
+        db: AsyncIOMotorDatabase,
         session_id: str,
     ) -> None:
-        await cls.set_rls_context(db, bypass=True)
-        await db.execute(update(UserSession).where(UserSession.session_id == session_id).values(revoked=True, updated_at=datetime.now(timezone.utc)))
-        await db.commit()
+        await db.user_sessions.update_one(
+            {"session_id": session_id},
+            {"$set": {"revoked": True, "updated_at": datetime.now(timezone.utc)}},
+        )
 
         logger.info(
             "session_revoked",
@@ -686,12 +635,13 @@ class SecurityService:
     async def revoke_all_user_sessions(
         cls,
         *,
-        db: AsyncSession,
+        db: AsyncIOMotorDatabase,
         user_id: str,
     ) -> None:
-        await cls.set_rls_context(db, user_id=user_id, bypass=False)
-        await db.execute(update(UserSession).where(UserSession.user_id == user_id).values(revoked=True, updated_at=datetime.now(timezone.utc)))
-        await db.commit()
+        await db.user_sessions.update_many(
+            {"user_id": str(user_id)},
+            {"$set": {"revoked": True, "updated_at": datetime.now(timezone.utc)}},
+        )
 
         logger.warning(
             "all_sessions_revoked",

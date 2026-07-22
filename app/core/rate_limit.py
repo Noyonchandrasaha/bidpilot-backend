@@ -7,7 +7,7 @@ from app.core.config import settings
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["100/minute"] if not settings.is_development else [],
-    storage_uri=settings.REDIS_URL if settings.is_production else "memory://"
+    storage_uri=settings.database_url,
 )
 
 # Modular Rate Limit Profiles
