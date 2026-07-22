@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     EmailStr,
@@ -27,6 +28,7 @@ class ForgotPasswordRequest(BaseModel):
 
     model_config = ConfigDict(
         extra="forbid",
+        populate_by_name=True,
         str_strip_whitespace=True,
         json_schema_extra={
             "example": {
@@ -63,7 +65,8 @@ class ForgotPasswordResponse(BaseModel):
     )
 
     model_config = ConfigDict(
-        extra="forbid"
+        extra="forbid",
+        populate_by_name=True,
     )
 
 
@@ -81,9 +84,15 @@ class OTPVerificationRequest(BaseModel):
         examples=["AC1EV3"]
     )
 
-    reset_token: str = Field(
-        ...,
-        description="JWT reset session token"
+    reset_token: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("reset_token", "resetToken"),
+        description="JWT reset session token. Optional when secure recovery cookie is present."
+    )
+
+    email: Optional[EmailStr] = Field(
+        default=None,
+        description="Account email for clients that keep recovery context outside the request token."
     )
 
     @field_validator("otp")
@@ -100,6 +109,7 @@ class OTPVerificationRequest(BaseModel):
 
     model_config = ConfigDict(
         extra="forbid",
+        populate_by_name=True,
         str_strip_whitespace=True,
         json_schema_extra={
             "example": {
@@ -134,7 +144,8 @@ class OTPVerificationResponse(BaseModel):
     )
 
     model_config = ConfigDict(
-        extra="forbid"
+        extra="forbid",
+        populate_by_name=True,
     )
 
 
@@ -144,13 +155,15 @@ class OTPVerificationResponse(BaseModel):
 # =========================================================
 
 class ResendOTPRequest(BaseModel):
-    reset_token: str = Field(
-        ...,
-        description="JWT reset session token"
+    reset_token: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("reset_token", "resetToken"),
+        description="JWT reset session token. Optional when secure recovery cookie is present."
     )
 
     model_config = ConfigDict(
         extra="forbid",
+        populate_by_name=True,
         str_strip_whitespace=True,
         json_schema_extra={
             "example": {
@@ -182,7 +195,8 @@ class ResendOTPResponse(BaseModel):
     )
 
     model_config = ConfigDict(
-        extra="forbid"
+        extra="forbid",
+        populate_by_name=True,
     )
 
 
@@ -192,15 +206,17 @@ class ResendOTPResponse(BaseModel):
 # =========================================================
 
 class UpdatePasswordRequest(BaseModel):
-    verified_reset_token: str = Field(
-        ...,
+    verified_reset_token: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("verified_reset_token", "verifiedResetToken"),
         description=(
-            "Verified JWT token obtained after OTP verification"
+            "Verified JWT token obtained after OTP verification. Optional when secure recovery cookie is present."
         )
     )
 
     new_password: SecretStr = Field(
         ...,
+        validation_alias=AliasChoices("new_password", "newPassword"),
         min_length=8,
         max_length=128,
         description=(
@@ -210,9 +226,10 @@ class UpdatePasswordRequest(BaseModel):
         )
     )
 
-    confirm_password: SecretStr = Field(
-        ...,
-        description="Must match the new password"
+    confirm_password: Optional[SecretStr] = Field(
+        default=None,
+        validation_alias=AliasChoices("confirm_password", "confirmPassword"),
+        description="Must match the new password when provided"
     )
 
     @field_validator("new_password")
@@ -255,9 +272,12 @@ class UpdatePasswordRequest(BaseModel):
     @classmethod
     def validate_password_match(
         cls,
-        value: SecretStr,
+        value: Optional[SecretStr],
         info
-    ) -> SecretStr:
+    ) -> Optional[SecretStr]:
+
+        if value is None:
+            return value
 
         new_password = info.data.get("new_password")
 
@@ -272,6 +292,7 @@ class UpdatePasswordRequest(BaseModel):
 
     model_config = ConfigDict(
         extra="forbid",
+        populate_by_name=True,
         str_strip_whitespace=True,
         json_schema_extra={
             "example": {
@@ -300,6 +321,7 @@ class UpdatePasswordResponse(BaseModel):
     )
 
     model_config = ConfigDict(
-        extra="forbid"
+        extra="forbid",
+        populate_by_name=True,
     )
 

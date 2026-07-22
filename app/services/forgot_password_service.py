@@ -16,6 +16,7 @@ from app.api.schemas.auth.forget_password import (
 )
 from app.core.config import settings
 from app.core.logger import logger
+from app.model.models import new_document_id, to_object_id
 from app.utils.security import security_service
 
 
@@ -74,6 +75,9 @@ class ForgotPasswordService:
 
         if not user:
             reset_id = str(uuid4())
+            if settings.is_development:
+                logger.info("password_reset_user_not_found", extra={"email": email, "reset_id": reset_id})
+                print(f"[DEV OTP] no account found for email={email}; no OTP created", flush=True)
             reset_token = ForgotPasswordService._create_reset_token(
                 user_id=str(new_document_id()),
                 reset_id=reset_id,
@@ -106,7 +110,7 @@ class ForgotPasswordService:
 
         if settings.is_development:
             logger.info("password_reset_otp_generated", extra={"email": email, "otp": otp, "reset_id": reset_id})
-            print(f"[DEV OTP] reset_id={reset_id} otp={otp}")
+            print(f"[DEV OTP] reset_id={reset_id} otp={otp}", flush=True)
 
         reset_token = ForgotPasswordService._create_reset_token(user_id=user_id, reset_id=reset_id)
         return ForgotPasswordResponse(reset_token=reset_token, expires_in=ForgotPasswordService.OTP_TTL_SECONDS, retry_after=ForgotPasswordService.RESEND_COOLDOWN_SECONDS, otp_sent=True)
@@ -182,7 +186,7 @@ class ForgotPasswordService:
 
         if settings.is_development:
             logger.info("password_reset_otp_resent", extra={"otp": otp, "reset_id": reset_id})
-            print(f"[DEV OTP] reset_id={reset_id} otp={otp}")
+            print(f"[DEV OTP] reset_id={reset_id} otp={otp}", flush=True)
 
         refreshed_token = ForgotPasswordService._create_reset_token(user_id=payload["sub"], reset_id=reset_id)
         return ResendOTPResponse(reset_token=refreshed_token, expires_in=ForgotPasswordService.OTP_TTL_SECONDS, retry_after=ForgotPasswordService.RESEND_COOLDOWN_SECONDS, otp_resent=True)

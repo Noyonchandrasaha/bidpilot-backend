@@ -6,6 +6,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     EmailStr,
+    AliasChoices,
     Field,
     SecretStr,
 )
@@ -32,11 +33,13 @@ class SigninRequest(BaseModel):
 
     remember_me: bool = Field(
         default=False,
+        validation_alias=AliasChoices("remember_me", "rememberMe"),
         description="Whether to extend refresh token lifetime"
     )
 
     model_config = ConfigDict(
         extra="forbid",
+        populate_by_name=True,
         str_strip_whitespace=True,
         json_schema_extra={
             "example": {
