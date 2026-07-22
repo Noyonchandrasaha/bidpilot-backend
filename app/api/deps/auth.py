@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.db.connection import get_database
+from app.model.models import to_object_id
 from app.utils.enum.user import UserRole
 from app.utils.security import (
     InvalidTokenClaimsError,
