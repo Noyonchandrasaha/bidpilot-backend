@@ -10,6 +10,22 @@ limiter = Limiter(
     storage_uri=settings.database_url,
 )
 
+
+def initialize_rate_limit_storage() -> None:
+    storage = getattr(limiter, "_storage", None)
+    if storage is not None and hasattr(storage, "storage"):
+        storage.storage
+
+
+def close_rate_limit_storage() -> None:
+    storage = getattr(limiter, "_storage", None)
+    if storage is None:
+        return
+    storage_client = getattr(storage, "_storage", None)
+    if storage_client is not None:
+        storage_client.close()
+
+
 # Modular Rate Limit Profiles
 AUTH_LIMIT = "5/minute"
 SENSITIVE_LIMIT = "10/minute"

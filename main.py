@@ -15,7 +15,7 @@ from app.model.models import UserStatus, new_document_id
 from user_agents import parse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from app.core.rate_limit import limiter, REGULAR_LIMIT
+from app.core.rate_limit import close_rate_limit_storage, initialize_rate_limit_storage, limiter, REGULAR_LIMIT
 from app.utils.security import security_service
 from app.api.routes.auth.signin import router as auth_router
 from app.api.routes.users.profile import router as user_router
@@ -75,10 +75,12 @@ async def lifespan(app: FastAPI):
     try:
         # Initialize dependencies
         await db_client.connect()
+        initialize_rate_limit_storage()
         await seed_admin_account()
         
         yield
     finally:
+        close_rate_limit_storage()
         await db_client.close()
         logger.info(f"Shutting down {settings.APP_NAME}...")
 
