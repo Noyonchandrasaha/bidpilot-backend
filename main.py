@@ -21,52 +21,52 @@ from app.api.routes.auth.signin import router as auth_router
 from app.api.routes.users.profile import router as user_router
 
 
-async def seed_admin_account() -> None:
-    admin_email = settings.ADMIN_EMAIL.strip().lower()
-    admin_password = settings.ADMIN_PASSWORD.strip()
+async def seed_pm_account() -> None:
+    pm_email = settings.PM_EMAIL.strip().lower()
+    pm_password = settings.PM_PASSWORD.strip()
 
-    if not admin_email or not admin_password:
-        logger.warning("admin_seed_skipped_missing_credentials")
+    if not pm_email or not pm_password:
+        logger.warning("pm_seed_skipped_missing_credentials")
         return
 
     now = datetime.now(timezone.utc)
     db = db_client.get_database()
-    admin_role = await db.roles.find_one({"slug": "admin"})
-    if admin_role is None:
-        admin_role = {
+    pm_role = await db.roles.find_one({"slug": "pm"})
+    if pm_role is None:
+        pm_role = {
             "_id": new_document_id(),
-            "name": "Admin",
-            "slug": "admin",
-            "description": "System administrator role",
+            "name": "Project Manager",
+            "slug": "pm",
+            "description": "Project manager role",
             "is_system": True,
             "created_at": now,
             "updated_at": now,
         }
-        await db.roles.insert_one(admin_role)
+        await db.roles.insert_one(pm_role)
 
-    existing_admin = await db.users.find_one({"email": admin_email})
-    admin_payload = {
-        "role_id": admin_role["_id"],
-        "name": "System Admin",
-        "email": admin_email,
-        "password_hash": security_service.hash_password(admin_password),
+    existing_pm = await db.users.find_one({"email": pm_email})
+    pm_payload = {
+        "role_id": pm_role["_id"],
+        "name": "Project Manager",
+        "email": pm_email,
+        "password_hash": security_service.hash_password(pm_password),
         "status": UserStatus.ACTIVE.value,
         "email_verified": True,
         "updated_at": now,
         "deleted_at": None,
     }
-    if existing_admin:
+    if existing_pm:
         await db.users.update_one(
-            {"_id": existing_admin["_id"]},
-            {"$set": admin_payload},
+            {"_id": existing_pm["_id"]},
+            {"$set": pm_payload},
         )
-        logger.info("admin_seed_updated_existing", extra={"email": admin_email})
+        logger.info("pm_seed_updated_existing", extra={"email": pm_email})
         return
 
-    admin_payload["_id"] = new_document_id()
-    admin_payload["created_at"] = now
-    await db.users.insert_one(admin_payload)
-    logger.info("admin_seed_created", extra={"email": admin_email})
+    pm_payload["_id"] = new_document_id()
+    pm_payload["created_at"] = now
+    await db.users.insert_one(pm_payload)
+    logger.info("pm_seed_created", extra={"email": pm_email})
 
 
 @asynccontextmanager
@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
         # Initialize dependencies
         await db_client.connect()
         initialize_rate_limit_storage()
-        await seed_admin_account()
+        await seed_pm_account()
         
         yield
     finally:

@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     DATABASE_NAME: str = Field(default="BidPilot_backend", description="MongoDB database name.")
     APP_VERSION: str = Field(default="1.0.0", description="Application version exposed in health and metrics metadata.")
 
-    ADMIN_EMAIL: str = Field(default="admin@example.com")
-    ADMIN_PASSWORD: str = Field(default="ASDFqwer!234")
+    PM_EMAIL: str = Field(default="pm@example.com")
+    PM_PASSWORD: str = Field(default="ASDFqwer!234")
 
     JWT_PRIVATE_KEY: SecretStr = Field(description="This is the Private key of JWT")
     JWT_PUBLIC_KEY: SecretStr = Field(description="This is the public key of jwt")
@@ -74,8 +74,8 @@ class Settings(BaseSettings):
                 raise ValueError("TRUSTED_HOSTS cannot be '*' in production.")
             if self.EXPOSE_DOCS:
                 raise ValueError("EXPOSE_DOCS must be False in production.")
-            if self.ADMIN_EMAIL == "admin@example.com" or self.ADMIN_PASSWORD == "ASDFqwer!234":
-                raise ValueError("Default admin credentials cannot be used in production.")
+            if self.PM_EMAIL == "pm@example.com" or self.PM_PASSWORD == "ASDFqwer!234":
+                raise ValueError("Default PM credentials cannot be used in production.")
         return self
 
     @property
