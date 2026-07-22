@@ -51,8 +51,8 @@ async def signin(
     try:
         result = await auth_service.signin(db=db, payload=payload, request=request)
         if result.tokens:
-            access_max_age = result.tokens.access_token_expires_in
-            refresh_max_age = result.tokens.refresh_token_expires_in
+            access_max_age = result.tokens.access_token_expires_in if payload.remember_me else None
+            refresh_max_age = result.tokens.refresh_token_expires_in if payload.remember_me else None
             secure_cookie = request.url.scheme == "https"
 
             response.set_cookie(
@@ -155,10 +155,12 @@ async def refresh_tokens(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
     secure_cookie = request.url.scheme == "https"
+    cookie_max_age = rotated["access_token_expires_in"] if rotated.get("remember_me") else None
+    refresh_cookie_max_age = rotated["refresh_token_expires_in"] if rotated.get("remember_me") else None
     response.set_cookie(
         key="access_token",
         value=rotated["access_token"],
-        max_age=rotated["access_token_expires_in"],
+        max_age=cookie_max_age,
         httponly=True,
         secure=secure_cookie,
         samesite="lax",
@@ -167,7 +169,7 @@ async def refresh_tokens(
     response.set_cookie(
         key="refresh_token",
         value=rotated["refresh_token"],
-        max_age=rotated["refresh_token_expires_in"],
+        max_age=refresh_cookie_max_age,
         httponly=True,
         secure=secure_cookie,
         samesite="lax",

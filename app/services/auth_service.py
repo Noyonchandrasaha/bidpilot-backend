@@ -41,6 +41,7 @@ class AuthService:
             user_id=str(user["_id"]),
             ip_address=client_host,
             user_agent=middleware_device_name or user_agent,
+            remember_me=payload.remember_me,
         )
         access_token = security_service.create_access_token(
             user_id=str(user["_id"]),
@@ -89,6 +90,7 @@ class AuthService:
             "refresh_token": new_refresh_token,
             "session_id": payload.get("sid"),
             "refresh_count": session.get("refresh_count", 0) if session else 0,
+            "remember_me": session.get("remember_me", False) if session else False,
             "access_token_expires_in": security_service.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             "refresh_token_expires_in": security_service.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
         }

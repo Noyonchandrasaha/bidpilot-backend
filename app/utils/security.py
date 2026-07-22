@@ -272,6 +272,7 @@ class SecurityService:
         user_id: str,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
+        remember_me: bool = False,
     ) -> tuple[str, str]:
 
         family_id = str(uuid4())
@@ -301,6 +302,7 @@ class SecurityService:
                 "refresh_count": 0,
                 "ip_address": ip_address,
                 "user_agent": user_agent,
+                "remember_me": remember_me,
                 "created_at": now,
                 "updated_at": now,
                 "last_used_at": now,
@@ -549,6 +551,7 @@ class SecurityService:
                 "refresh_count": refresh_count,
                 "ip_address": ip_address,
                 "user_agent": user_agent,
+                "remember_me": old_session.get("remember_me", False),
                 "created_at": old_session.get("created_at", now),
                 "updated_at": now,
                 "last_used_at": now,
